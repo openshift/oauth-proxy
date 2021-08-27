@@ -740,7 +740,7 @@ func NewClientConfigForTest(t *testing.T) *rest.Config {
 
 func WaitForClusterOperatorStatus(t *testing.T, client configv1client.ConfigV1Interface, available, progressing, degraded *bool) error {
 	status := map[configv1.ClusterStatusConditionType]bool{} // struct for easy printing the conditions
-	return wait.PollImmediate(time.Second, 5*time.Minute, func() (bool, error) {
+	return wait.PollImmediate(time.Second, 10*time.Minute, func() (bool, error) {
 		clusterOperator, err := client.ClusterOperators().Get(context.TODO(), "authentication", metav1.GetOptions{})
 		if errors.IsNotFound(err) {
 			t.Logf("clusteroperators.config.openshift.io/authentication: %v", err)
