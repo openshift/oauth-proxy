@@ -493,6 +493,53 @@ func TestSignInPageIncludesTargetRedirect(t *testing.T) {
 	}
 }
 
+func TestGetRedirect(t *testing.T) {
+	testCases := []struct {
+		name       string
+		options    func() *Options
+		requestURI string
+		expected   string
+	}{
+		{
+			name: "Redirect to root",
+			options: func() *Options {
+				return testOptions()
+			},
+			requestURI: "/oauth2/start",
+			expected:   "/",
+		},
+		{
+			name: "Redirect to root",
+			options: func() *Options {
+				opts := testOptions()
+				opts.SkipProviderButton = true
+				opts.ProxyPrefix = "/oauth"
+				return opts
+			},
+			requestURI: "/oauth/start",
+			expected:   "/",
+		},
+		{
+			name: "Redirect to custom uri",
+			options: func() *Options {
+				opts := testOptions()
+				opts.SkipProviderButton = true
+				opts.ProxyPrefix = "/oauth2"
+				return opts
+			},
+			requestURI: "/oauth2/start",
+			expected:   "/oauth2/start",
+		},
+	}
+	for _, tc := range testCases {
+		req, _ := http.NewRequest("GET", tc.requestURI, strings.NewReader(""))
+		req.RequestURI = tc.requestURI
+		oauthProxy := NewOAuthProxy(tc.options(), func(s string) bool { return true })
+		redirect, _ := oauthProxy.GetRedirect(req)
+		assert.Equal(t, tc.expected, redirect)
+	}
+}
+
 func TestSignInPageDirectAccessRedirectsToRoot(t *testing.T) {
 	sip_test := NewSignInPageTest()
 	code, body := sip_test.GetEndpoint("/oauth2/sign_in")
