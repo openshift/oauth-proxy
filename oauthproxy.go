@@ -504,7 +504,7 @@ func (p *OAuthProxy) ManualSignIn(rw http.ResponseWriter, req *http.Request) (st
 }
 
 func (p *OAuthProxy) GetRedirect(req *http.Request) (redirect string, err error) {
-	if p.SkipProviderButton {
+        if p.SkipProviderButton && p.ProxyPrefix != "/oauth" {
 		redirect = req.RequestURI
 		return
 	}
