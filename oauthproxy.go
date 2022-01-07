@@ -348,7 +348,11 @@ func (p *OAuthProxy) redeemCode(host, code string) (s *providers.SessionState, e
 
 func (p *OAuthProxy) MakeSessionCookie(req *http.Request, value string, expiration time.Duration, now time.Time) *http.Cookie {
 	if value != "" {
-		value = cookie.SignedValue(fmt.Sprintf("%s%s", p.CookieSeed, req.Host), p.CookieName, value, now)
+		domain := req.Host
+		if p.CookieDomain != "" {
+			domain = p.CookieDomain
+		}
+		value = cookie.SignedValue(fmt.Sprintf("%s%s", p.CookieSeed, domain), p.CookieName, value, now)
 		if len(value) > 4096 {
 			// Cookies cannot be larger than 4kb
 			log.Printf("WARNING - Cookie Size: %d bytes", len(value))
@@ -408,7 +412,13 @@ func (p *OAuthProxy) LoadCookiedSession(req *http.Request) (*providers.SessionSt
 		// always http.ErrNoCookie
 		return nil, age, err
 	}
-	val, timestamp, ok := cookie.Validate(c, fmt.Sprintf("%s%s", p.CookieSeed, req.Host), p.CookieExpire)
+
+	domain := req.Host
+	if p.CookieDomain != "" {
+		domain = p.CookieDomain
+	}
+	val, timestamp, ok := cookie.Validate(c, fmt.Sprintf("%s%s", p.CookieSeed, domain), p.CookieExpire)
+
 	if !ok {
 		return nil, age, errors.New("Cookie Signature not valid")
 	}
