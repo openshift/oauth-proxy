@@ -65,7 +65,7 @@ Cons:
 Example:
 
     # Allows access if the user can view the service 'proxy' in namespace 'app-dev'
-    --openshift-sar='{"namespace":"app-dev","resource":"services","resourceName":"proxy","verb":"get"}'
+    --openshift-sar={"namespace":"app-dev","resource":"services","resourceName":"proxy","verb":"get"}
 
 A user who visits the proxy will be redirected to an OAuth login with OpenShift, and must grant
 access to the proxy to view their user info and request permissions for them. Once they have granted
@@ -89,7 +89,7 @@ to be able to access the backed server.
 Example:
 
     # Allows access to foo.example.com if the user can view the service 'proxy' in namespace 'app-dev'
-    --openshift-sar-by-host='{"foo.example.com":{"namespace":"app-dev","resource":"services","resourceName":"proxy","verb":"get"}}'
+    --openshift-sar-by-host={"foo.example.com":{"namespace":"app-dev","resource":"services","resourceName":"proxy","verb":"get"}}
 
 #### Delegate authentication and authorization to OpenShift for infrastructure
 
@@ -116,10 +116,10 @@ Cons:
 Example:
 
     # Allows access if the provided bearer token has view permission on a custom resource
-    --openshift-delegate-urls='{"/":{"group":"custom.group","resource":"myproxy","verb":"get"}}'
+    --openshift-delegate-urls={"/":{"group":"custom.group","resource":"myproxy","verb":"get"}}
 
     # Grant access only to paths under /api
-    --openshift-delegate-urls='{"/api":{"group":"custom.group","resource":"myproxy","verb":"get"}}'
+    --openshift-delegate-urls={"/api":{"group":"custom.group","resource":"myproxy","verb":"get"}}
 
 WARNING: Because users are sending their own credentials to the proxy, it's important to use this 
 setting only when the proxy is under control of the cluster administrators. Otherwise, end users 
