@@ -8,6 +8,7 @@ require (
 	github.com/bitly/go-simplejson v0.5.1-0.20170206154632-da1a8928f709
 	github.com/bmizerany/assert v0.0.0-20160611221934-b7ed37b82869
 	github.com/fsnotify/fsnotify v1.6.0
+	github.com/google/uuid v1.1.2
 	github.com/mreiferson/go-options v1.0.0
 	github.com/openshift/api v0.0.0-20230223193310-d964c7a58d75
 	github.com/openshift/build-machinery-go v0.0.0-20220913142420-e25cf57ea46d
@@ -48,7 +49,6 @@ require (
 	github.com/google/gnostic v0.5.7-v3refs // indirect
 	github.com/google/go-cmp v0.5.9 // indirect
 	github.com/google/gofuzz v1.2.0 // indirect
-	github.com/google/uuid v1.1.2 // indirect
 	github.com/grpc-ecosystem/go-grpc-prometheus v1.2.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.7.0 // indirect
 	github.com/imdario/mergo v0.3.7 // indirect
