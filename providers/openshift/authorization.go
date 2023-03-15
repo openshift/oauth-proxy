@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"k8s.io/apiserver/pkg/authorization/authorizerfactory"
+	serveroptions "k8s.io/apiserver/pkg/server/options"
 	authorizationclient "k8s.io/client-go/kubernetes/typed/authorization/v1"
 )
 
@@ -62,11 +63,12 @@ func (s *DelegatingAuthorizationOptions) ToAuthorizationConfig() (authorizerfact
 		SubjectAccessReviewClient: sarClient,
 		AllowCacheTTL:             s.AllowCacheTTL,
 		DenyCacheTTL:              s.DenyCacheTTL,
+		WebhookRetryBackoff:       serveroptions.DefaultAuthWebhookRetryBackoff(),
 	}
 	return ret, nil
 }
 
-func (s *DelegatingAuthorizationOptions) newSubjectAccessReview() (authorizationclient.SubjectAccessReviewInterface, error) {
+func (s *DelegatingAuthorizationOptions) newSubjectAccessReview() (authorizationclient.AuthorizationV1Interface, error) {
 	clientConfig, err := GetClientConfig(s.RemoteKubeConfigFile)
 	if err != nil {
 		return nil, err
@@ -77,5 +79,5 @@ func (s *DelegatingAuthorizationOptions) newSubjectAccessReview() (authorization
 		return nil, err
 	}
 
-	return client.SubjectAccessReviews(), nil
+	return client, nil
 }

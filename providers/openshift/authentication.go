@@ -12,6 +12,7 @@ import (
 	"k8s.io/apiserver/pkg/authentication/authenticatorfactory"
 	"k8s.io/apiserver/pkg/authentication/request/headerrequest"
 	"k8s.io/apiserver/pkg/server/dynamiccertificates"
+	serveroptions "k8s.io/apiserver/pkg/server/options"
 	authenticationclient "k8s.io/client-go/kubernetes/typed/authentication/v1"
 )
 
@@ -156,6 +157,7 @@ func (s *DelegatingAuthenticationOptions) ToAuthenticationConfig() (authenticato
 	ret := authenticatorfactory.DelegatingAuthenticatorConfig{
 		Anonymous:                          true,
 		TokenAccessReviewClient:            tokenClient,
+		WebhookRetryBackoff:                serveroptions.DefaultAuthWebhookRetryBackoff(),
 		CacheTTL:                           s.CacheTTL,
 		ClientCertificateCAContentProvider: clientCAProvider,
 		RequestHeaderConfig:                requestHeaderConfig,
@@ -188,7 +190,7 @@ func deserializeStrings(in string) ([]string, error) {
 	return ret, nil
 }
 
-func (s *DelegatingAuthenticationOptions) newTokenAccessReview() (authenticationclient.TokenReviewInterface, error) {
+func (s *DelegatingAuthenticationOptions) newTokenAccessReview() (authenticationclient.AuthenticationV1Interface, error) {
 	clientConfig, err := GetClientConfig(s.RemoteKubeConfigFile)
 	if err != nil {
 		return nil, err
@@ -198,5 +200,5 @@ func (s *DelegatingAuthenticationOptions) newTokenAccessReview() (authentication
 		return nil, err
 	}
 
-	return client.TokenReviews(), nil
+	return client, nil
 }

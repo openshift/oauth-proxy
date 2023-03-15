@@ -82,7 +82,7 @@ func (s *Server) ServeHTTPS() {
 	if err != nil {
 		log.Fatalf("FATAL: loading tls config (%s, %s) failed - %s", s.Opts.TLSCertFile, s.Opts.TLSKeyFile, err)
 	}
-	go servingCertProvider.Run(1, context.TODO().Done())
+	go servingCertProvider.Run(context.Background(), 1)
 
 	config.GetCertificate = func(_ *tls.ClientHelloInfo) (*tls.Certificate, error) {
 		// this disregards information from ClientHello but we're not doing SNI anyway

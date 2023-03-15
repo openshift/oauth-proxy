@@ -364,7 +364,7 @@ func (p *OpenShiftProvider) Complete(data *providers.ProviderData, reviewURL *ur
 		// check whether we have access to perform authentication review
 		if authenticator.TokenAccessReviewClient != nil {
 			wait.PollImmediate(2*time.Second, 10*time.Second, func() (bool, error) {
-				_, err := authenticator.TokenAccessReviewClient.Create(context.TODO(),
+				_, err := authenticator.TokenAccessReviewClient.TokenReviews().Create(context.TODO(),
 					&authenticationv1.TokenReview{
 						Spec: authenticationv1.TokenReviewSpec{
 							Token: "TEST",
@@ -386,7 +386,7 @@ func (p *OpenShiftProvider) Complete(data *providers.ProviderData, reviewURL *ur
 		// check whether we have access to perform authentication review
 		if authorizer.SubjectAccessReviewClient != nil {
 			wait.PollImmediate(2*time.Second, 10*time.Second, func() (bool, error) {
-				_, err := authorizer.SubjectAccessReviewClient.Create(context.TODO(),
+				_, err := authorizer.SubjectAccessReviewClient.SubjectAccessReviews().Create(context.TODO(),
 					&authorizationv1.SubjectAccessReview{
 						Spec: authorizationv1.SubjectAccessReviewSpec{
 							User: "TEST",
