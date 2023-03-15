@@ -74,6 +74,8 @@ func (s *DelegatingAuthorizationOptions) newSubjectAccessReview() (authorization
 		return nil, err
 	}
 
+	clientConfig.Wrap(auditIDRountripper)
+
 	client, err := authorizationclient.NewForConfig(clientConfig)
 	if err != nil {
 		return nil, err
