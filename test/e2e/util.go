@@ -25,6 +25,7 @@ import (
 
 	authorizationv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -34,6 +35,7 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	cmdapi "k8s.io/client-go/tools/clientcmd/api"
+	"k8s.io/utils/pointer"
 
 	configv1 "github.com/openshift/api/config/v1"
 	routev1 "github.com/openshift/api/route/v1"
@@ -667,6 +669,7 @@ func newOAuthProxyPod(proxyImage, backendImage string, extraProxyArgs []string, 
 		"--cookie-secret=SECRET",
 		"--skip-provider-button",
 	}, extraProxyArgs...)
+
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "proxy",
@@ -675,6 +678,11 @@ func newOAuthProxyPod(proxyImage, backendImage string, extraProxyArgs []string, 
 			},
 		},
 		Spec: corev1.PodSpec{
+			SecurityContext: &v1.PodSecurityContext{
+				RunAsNonRoot:   pointer.Bool(true),
+				RunAsUser:      pointer.Int64(1000),
+				SeccompProfile: &v1.SeccompProfile{Type: v1.SeccompProfileTypeRuntimeDefault},
+			},
 			Volumes: []corev1.Volume{
 				{
 					Name: "proxy-cert-volume",
@@ -692,6 +700,10 @@ func newOAuthProxyPod(proxyImage, backendImage string, extraProxyArgs []string, 
 					ImagePullPolicy: corev1.PullIfNotPresent,
 					Name:            "oauth-proxy",
 					Args:            proxyArgs,
+					SecurityContext: &v1.SecurityContext{
+						AllowPrivilegeEscalation: pointer.Bool(false),
+						Capabilities:             &v1.Capabilities{Drop: []v1.Capability{"ALL"}},
+					},
 					Ports: []corev1.ContainerPort{
 						{
 							ContainerPort: 8443,
@@ -707,6 +719,10 @@ func newOAuthProxyPod(proxyImage, backendImage string, extraProxyArgs []string, 
 				{
 					Image: backendImage,
 					Name:  "hello-openshift",
+					SecurityContext: &v1.SecurityContext{
+						AllowPrivilegeEscalation: pointer.Bool(false),
+						Capabilities:             &v1.Capabilities{Drop: []v1.Capability{"ALL"}},
+					},
 					Ports: []corev1.ContainerPort{
 						{
 							ContainerPort: 8080,
