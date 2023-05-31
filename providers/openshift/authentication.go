@@ -6,12 +6,16 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 
 	"k8s.io/apiserver/pkg/authentication/authenticatorfactory"
 	"k8s.io/apiserver/pkg/authentication/request/headerrequest"
 	"k8s.io/apiserver/pkg/server/dynamiccertificates"
+	serveroptions "k8s.io/apiserver/pkg/server/options"
 	authenticationclient "k8s.io/client-go/kubernetes/typed/authentication/v1"
 )
 
@@ -156,6 +160,7 @@ func (s *DelegatingAuthenticationOptions) ToAuthenticationConfig() (authenticato
 	ret := authenticatorfactory.DelegatingAuthenticatorConfig{
 		Anonymous:                          true,
 		TokenAccessReviewClient:            tokenClient,
+		WebhookRetryBackoff:                serveroptions.DefaultAuthWebhookRetryBackoff(),
 		CacheTTL:                           s.CacheTTL,
 		ClientCertificateCAContentProvider: clientCAProvider,
 		RequestHeaderConfig:                requestHeaderConfig,
@@ -188,15 +193,42 @@ func deserializeStrings(in string) ([]string, error) {
 	return ret, nil
 }
 
-func (s *DelegatingAuthenticationOptions) newTokenAccessReview() (authenticationclient.TokenReviewInterface, error) {
+func (s *DelegatingAuthenticationOptions) newTokenAccessReview() (authenticationclient.AuthenticationV1Interface, error) {
 	clientConfig, err := GetClientConfig(s.RemoteKubeConfigFile)
 	if err != nil {
 		return nil, err
 	}
+
+	clientConfig.Wrap(auditIDRountripper)
+
 	client, err := authenticationclient.NewForConfig(clientConfig)
 	if err != nil {
 		return nil, err
 	}
 
-	return client.TokenReviews(), nil
+	return client, nil
+}
+
+func auditIDRountripper(rt http.RoundTripper) http.RoundTripper {
+	return roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		const auditIDKey = "Audit-ID"
+
+		auditID := r.Header.Get(auditIDKey)
+		if len(auditID) == 0 {
+			auditID = uuid.New().String()
+		}
+
+		r.Header.Add("Audit-ID", auditID)
+		resp, err := rt.RoundTrip(r)
+		if err != nil {
+			err = fmt.Errorf("audit-ID %q request failed: %w", auditID, err)
+		}
+		return resp, err
+	})
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (fn roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return fn(req)
 }
