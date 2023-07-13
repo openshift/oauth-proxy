@@ -105,6 +105,10 @@ func TestWebSocketProxy(t *testing.T) {
 }
 
 func TestNewReverseProxy(t *testing.T) {
+	opts := NewOptions()
+	opts.UpstreamFlush = 5 * time.Millisecond
+	opts.Timeout = 5 * time.Millisecond
+
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
 		hostname, _, _ := net.SplitHostPort(r.Host)
@@ -117,7 +121,7 @@ func TestNewReverseProxy(t *testing.T) {
 	backendHost := net.JoinHostPort(backendHostname, backendPort)
 	proxyURL, _ := url.Parse(backendURL.Scheme + "://" + backendHost + "/")
 
-	proxyHandler, _ := NewReverseProxy(proxyURL, 5*time.Millisecond, nil)
+	proxyHandler, _ := NewReverseProxy(proxyURL, opts)
 	setProxyUpstreamHostHeader(proxyHandler, proxyURL)
 	frontend := httptest.NewServer(proxyHandler)
 	defer frontend.Close()
@@ -131,6 +135,10 @@ func TestNewReverseProxy(t *testing.T) {
 }
 
 func TestEncodedSlashes(t *testing.T) {
+	opts := NewOptions()
+	opts.UpstreamFlush = 5 * time.Millisecond
+	opts.Timeout = 5 * time.Millisecond
+
 	var seen string
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
@@ -139,7 +147,7 @@ func TestEncodedSlashes(t *testing.T) {
 	defer backend.Close()
 
 	b, _ := url.Parse(backend.URL)
-	proxyHandler, _ := NewReverseProxy(b, 5*time.Millisecond, nil)
+	proxyHandler, _ := NewReverseProxy(b, opts)
 	setProxyDirector(proxyHandler)
 	frontend := httptest.NewServer(proxyHandler)
 	defer frontend.Close()
@@ -154,6 +162,32 @@ func TestEncodedSlashes(t *testing.T) {
 	if seen != encodedPath {
 		t.Errorf("got bad request %q expected %q", seen, encodedPath)
 	}
+}
+
+func TestNewReverseProxyWithTimeOut(t *testing.T) {
+	opts := NewOptions()
+	opts.Timeout = 1 * time.Millisecond
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(5 * time.Millisecond)
+	}))
+	defer backend.Close()
+
+	backendURL, _ := url.Parse(backend.URL)
+	backendHostname, backendPort, _ := net.SplitHostPort(backendURL.Host)
+	backendHost := net.JoinHostPort(backendHostname, backendPort)
+	proxyURL, _ := url.Parse(backendURL.Scheme + "://" + backendHost + "/")
+
+	proxyHandler, _ := NewReverseProxy(proxyURL, opts)
+	setProxyUpstreamHostHeader(proxyHandler, proxyURL)
+	frontend := httptest.NewServer(proxyHandler)
+	defer frontend.Close()
+
+	getReq, _ := http.NewRequest("GET", frontend.URL, nil)
+	res, _ := http.DefaultClient.Do(getReq)
+
+	assert.Equal(t, 502, res.StatusCode)
+	assert.Equal(t, "502 Bad Gateway", res.Status)
 }
 
 func TestRobotsTxt(t *testing.T) {

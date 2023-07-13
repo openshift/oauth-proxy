@@ -61,6 +61,13 @@ func TestOAuthProxyE2E(t *testing.T) {
 			},
 			pageResult: "URI: /",
 		},
+		"basic-with-timeout": {
+			oauthProxyArgs: []string{
+				"--upstream=http://localhost:8080",
+				"--upstream-timeout=30s",
+			},
+			pageResult: "URI: /",
+		},
 		// Tests a scope that is not valid for SA OAuth client use
 		"scope-full": {
 			oauthProxyArgs: []string{
