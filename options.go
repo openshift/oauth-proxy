@@ -20,6 +20,11 @@ import (
 	"github.com/openshift/oauth-proxy/providers/openshift"
 )
 
+const (
+	// DefaultUpstreamTimeout is the maximum duration a network dial to a upstream server for a response.
+	DefaultUpstreamTimeout = 30 * time.Second
+)
+
 // Configuration Options that can be set by Command Line Flag, or Config File
 type Options struct {
 	ProxyPrefix      string        `flag:"proxy-prefix" cfg:"proxy-prefix"`
@@ -101,6 +106,10 @@ type Options struct {
 	// provider to destroy their single sign-on session.
 	LogoutRedirectURL string `flag:"logout-url" cfg:"logout_url"`
 
+	// Timeout is the maximum duration the server will wait for a response from the upstream server.
+	// Defaults to 30 seconds.
+	Timeout time.Duration `flag:"upstream-timeout" cfg:"upstream_timeout"`
+
 	// internal values that are set after config validation
 	redirectURL       *url.URL
 	proxyURLs         []*url.URL
@@ -137,6 +146,7 @@ func NewOptions() *Options {
 		PassHostHeader:      true,
 		ApprovalPrompt:      "force",
 		RequestLogging:      true,
+		Timeout:             DefaultUpstreamTimeout,
 	}
 }
 
