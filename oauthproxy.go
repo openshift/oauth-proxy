@@ -119,6 +119,9 @@ func NewReverseProxy(target *url.URL, opts *Options) (*httputil.ReverseProxy, er
 	transport.MaxIdleConnsPerHost = 500
 	transport.IdleConnTimeout = 1 * time.Minute
 
+	// Change default duration for waiting for an upstream response
+	transport.ResponseHeaderTimeout = opts.Timeout
+
 	if len(opts.UpstreamCAs) > 0 {
 		pool, err := util.GetCertPool(opts.UpstreamCAs, false)
 		if err != nil {

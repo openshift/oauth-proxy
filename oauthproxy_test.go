@@ -173,6 +173,34 @@ func TestEncodedSlashes(t *testing.T) {
 	assert.Equal(t, encodedPath, seen)
 }
 
+func TestNewReverseProxyWithTimeOut(t *testing.T) {
+	opts := NewOptions()
+	opts.Timeout = 1 * time.Millisecond
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(5 * time.Millisecond)
+	}))
+	defer backend.Close()
+
+	proxyURL, err := url.Parse(backend.URL)
+	require.NoError(t, err)
+
+	proxyHandler, err := NewReverseProxy(proxyURL, opts)
+	require.NoError(t, err)
+
+	setProxyUpstreamHostHeader(proxyHandler, proxyURL)
+	frontend := httptest.NewServer(proxyHandler)
+	defer frontend.Close()
+
+	getReq, err := http.NewRequest("GET", frontend.URL, nil)
+	require.NoError(t, err)
+
+	res, err := http.DefaultClient.Do(getReq)
+	require.NoError(t, err)
+
+	assert.Equal(t, "502 Bad Gateway", res.Status)
+}
+
 func TestRobotsTxt(t *testing.T) {
 	opts := NewOptions()
 	opts.ClientID = "bazquux"
