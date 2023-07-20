@@ -265,6 +265,7 @@ Usage of oauth-proxy:
   -tls-cert string: path to certificate file
   -tls-key string: path to private key file
   -upstream value: the http url(s) of the upstream endpoint or file:// paths for static files. Routing is based on the path
+  -upstream-timeout duration: maximum amount of time the server will wait for a response from the upstream (default 30s)
   -validate-url string: Access token validation endpoint
   -version: print version string
 ```

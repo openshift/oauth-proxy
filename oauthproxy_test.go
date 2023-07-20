@@ -17,6 +17,7 @@ import (
 
 	"github.com/18F/hmacauth"
 	"github.com/bmizerany/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/openshift/oauth-proxy/providers"
 	"golang.org/x/net/websocket"
@@ -105,6 +106,9 @@ func TestWebSocketProxy(t *testing.T) {
 }
 
 func TestNewReverseProxy(t *testing.T) {
+	opts := NewOptions()
+	opts.UpstreamFlush = 5 * time.Millisecond
+
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
 		hostname, _, _ := net.SplitHostPort(r.Host)
@@ -112,25 +116,35 @@ func TestNewReverseProxy(t *testing.T) {
 	}))
 	defer backend.Close()
 
-	backendURL, _ := url.Parse(backend.URL)
-	backendHostname, backendPort, _ := net.SplitHostPort(backendURL.Host)
-	backendHost := net.JoinHostPort(backendHostname, backendPort)
-	proxyURL, _ := url.Parse(backendURL.Scheme + "://" + backendHost + "/")
+	proxyURL, err := url.Parse(backend.URL)
+	require.NoError(t, err)
 
-	proxyHandler, _ := NewReverseProxy(proxyURL, 5*time.Millisecond, nil)
+	backendHost, _, err := net.SplitHostPort(proxyURL.Host)
+	require.NoError(t, err)
+
+	proxyHandler, err := NewReverseProxy(proxyURL, opts)
+	require.NoError(t, err)
+
 	setProxyUpstreamHostHeader(proxyHandler, proxyURL)
 	frontend := httptest.NewServer(proxyHandler)
 	defer frontend.Close()
 
-	getReq, _ := http.NewRequest("GET", frontend.URL, nil)
-	res, _ := http.DefaultClient.Do(getReq)
-	bodyBytes, _ := ioutil.ReadAll(res.Body)
-	if g, e := string(bodyBytes), backendHostname; g != e {
-		t.Errorf("got body %q; expected %q", g, e)
-	}
+	getReq, err := http.NewRequest("GET", frontend.URL, nil)
+	require.NoError(t, err)
+
+	res, err := http.DefaultClient.Do(getReq)
+	require.NoError(t, err)
+
+	bodyBytes, err := ioutil.ReadAll(res.Body)
+	require.NoError(t, err)
+
+	assert.Equal(t, backendHost, string(bodyBytes))
 }
 
 func TestEncodedSlashes(t *testing.T) {
+	opts := NewOptions()
+	opts.UpstreamFlush = 5 * time.Millisecond
+
 	var seen string
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
@@ -138,22 +152,53 @@ func TestEncodedSlashes(t *testing.T) {
 	}))
 	defer backend.Close()
 
-	b, _ := url.Parse(backend.URL)
-	proxyHandler, _ := NewReverseProxy(b, 5*time.Millisecond, nil)
+	b, err := url.Parse(backend.URL)
+	require.NoError(t, err)
+
+	proxyHandler, err := NewReverseProxy(b, opts)
+	require.NoError(t, err)
+
 	setProxyDirector(proxyHandler)
 	frontend := httptest.NewServer(proxyHandler)
 	defer frontend.Close()
 
-	f, _ := url.Parse(frontend.URL)
+	f, err := url.Parse(frontend.URL)
+	require.NoError(t, err)
+
 	encodedPath := "/a%2Fb/?c=1"
 	getReq := &http.Request{URL: &url.URL{Scheme: "http", Host: f.Host, Opaque: encodedPath}}
-	_, err := http.DefaultClient.Do(getReq)
-	if err != nil {
-		t.Fatalf("err %s", err)
-	}
-	if seen != encodedPath {
-		t.Errorf("got bad request %q expected %q", seen, encodedPath)
-	}
+	_, err = http.DefaultClient.Do(getReq)
+	require.NoError(t, err)
+
+	assert.Equal(t, encodedPath, seen)
+}
+
+func TestNewReverseProxyWithTimeOut(t *testing.T) {
+	opts := NewOptions()
+	opts.Timeout = 1 * time.Millisecond
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(5 * time.Millisecond)
+	}))
+	defer backend.Close()
+
+	proxyURL, err := url.Parse(backend.URL)
+	require.NoError(t, err)
+
+	proxyHandler, err := NewReverseProxy(proxyURL, opts)
+	require.NoError(t, err)
+
+	setProxyUpstreamHostHeader(proxyHandler, proxyURL)
+	frontend := httptest.NewServer(proxyHandler)
+	defer frontend.Close()
+
+	getReq, err := http.NewRequest("GET", frontend.URL, nil)
+	require.NoError(t, err)
+
+	res, err := http.DefaultClient.Do(getReq)
+	require.NoError(t, err)
+
+	assert.Equal(t, "502 Bad Gateway", res.Status)
 }
 
 func TestRobotsTxt(t *testing.T) {
