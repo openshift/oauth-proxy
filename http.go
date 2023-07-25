@@ -21,17 +21,20 @@ type Server struct {
 	Opts    *Options
 }
 
-func (s *Server) ListenAndServe() {
+func (s *Server) ListenAndServe(ctx context.Context) {
 	if s.Opts.HttpsAddress == "" && s.Opts.HttpAddress == "" {
 		log.Fatalf("FATAL: must specify https-address or http-address")
 	}
 	if s.Opts.HttpsAddress != "" {
-		go s.ServeHTTPS()
+		go s.ServeHTTPS(ctx)
 	}
 	if s.Opts.HttpAddress != "" {
 		go s.ServeHTTP()
 	}
-	select {}
+
+	select {
+	case <-ctx.Done():
+	}
 }
 
 func (s *Server) ServeHTTP() {
@@ -69,7 +72,7 @@ func (s *Server) ServeHTTP() {
 	log.Printf("HTTP: closing %s", listener.Addr())
 }
 
-func (s *Server) ServeHTTPS() {
+func (s *Server) ServeHTTPS(ctx context.Context) {
 	addr := s.Opts.HttpsAddress
 
 	config := oscrypto.SecureTLSConfig(&tls.Config{})
@@ -82,7 +85,7 @@ func (s *Server) ServeHTTPS() {
 	if err != nil {
 		log.Fatalf("FATAL: loading tls config (%s, %s) failed - %s", s.Opts.TLSCertFile, s.Opts.TLSKeyFile, err)
 	}
-	go servingCertProvider.Run(1, context.TODO().Done())
+	go servingCertProvider.Run(ctx, 1)
 
 	config.GetCertificate = func(_ *tls.ClientHelloInfo) (*tls.Certificate, error) {
 		// this disregards information from ClientHello but we're not doing SNI anyway

@@ -19,8 +19,10 @@ package x509
 import (
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/hex"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
@@ -33,7 +35,7 @@ import (
 
 /*
  * By default, the following metric is defined as falling under
- * ALPHA stability level https://github.com/kubernetes/enhancements/blob/master/keps/sig-instrumentation/20190404-kubernetes-control-plane-metrics-stability.md#stability-classes)
+ * ALPHA stability level https://github.com/kubernetes/enhancements/blob/master/keps/sig-instrumentation/1209-metrics-stability/kubernetes-control-plane-metrics-stability.md#stability-classes)
  *
  * Promoting the stability level of the metric is a responsibility of the component owner, since it
  * involves explicitly acknowledging support for the metric across multiple releases, in accordance with
@@ -47,19 +49,19 @@ var clientCertificateExpirationHistogram = metrics.NewHistogram(
 		Help:      "Distribution of the remaining lifetime on the certificate used to authenticate a request.",
 		Buckets: []float64{
 			0,
-			(30 * time.Minute).Seconds(),
-			(1 * time.Hour).Seconds(),
-			(2 * time.Hour).Seconds(),
-			(6 * time.Hour).Seconds(),
-			(12 * time.Hour).Seconds(),
-			(24 * time.Hour).Seconds(),
-			(2 * 24 * time.Hour).Seconds(),
-			(4 * 24 * time.Hour).Seconds(),
-			(7 * 24 * time.Hour).Seconds(),
-			(30 * 24 * time.Hour).Seconds(),
-			(3 * 30 * 24 * time.Hour).Seconds(),
-			(6 * 30 * 24 * time.Hour).Seconds(),
-			(12 * 30 * 24 * time.Hour).Seconds(),
+			1800,     // 30 minutes
+			3600,     // 1 hour
+			7200,     // 2 hours
+			21600,    // 6 hours
+			43200,    // 12 hours
+			86400,    // 1 day
+			172800,   // 2 days
+			345600,   // 4 days
+			604800,   // 1 week
+			2592000,  // 1 month
+			7776000,  // 3 months
+			15552000, // 6 months
+			31104000, // 1 year
 		},
 		StabilityLevel: metrics.ALPHA,
 	},
@@ -80,6 +82,27 @@ type UserConversionFunc func(chain []*x509.Certificate) (*authenticator.Response
 // User implements x509.UserConversion
 func (f UserConversionFunc) User(chain []*x509.Certificate) (*authenticator.Response, bool, error) {
 	return f(chain)
+}
+
+func columnSeparatedHex(d []byte) string {
+	h := strings.ToUpper(hex.EncodeToString(d))
+	var sb strings.Builder
+	for i, r := range h {
+		sb.WriteRune(r)
+		if i%2 == 1 && i != len(h)-1 {
+			sb.WriteRune(':')
+		}
+	}
+	return sb.String()
+}
+
+func certificateIdentifier(c *x509.Certificate) string {
+	return fmt.Sprintf(
+		"SN=%d, SKID=%s, AKID=%s",
+		c.SerialNumber,
+		columnSeparatedHex(c.SubjectKeyId),
+		columnSeparatedHex(c.AuthorityKeyId),
+	)
 }
 
 // VerifyOptionFunc is function which provides a shallow copy of the VerifyOptions to the authenticator.  This allows
@@ -126,10 +149,14 @@ func (a *Authenticator) AuthenticateRequest(req *http.Request) (*authenticator.R
 	}
 
 	remaining := req.TLS.PeerCertificates[0].NotAfter.Sub(time.Now())
-	clientCertificateExpirationHistogram.Observe(remaining.Seconds())
+	clientCertificateExpirationHistogram.WithContext(req.Context()).Observe(remaining.Seconds())
 	chains, err := req.TLS.PeerCertificates[0].Verify(optsCopy)
 	if err != nil {
-		return nil, false, err
+		return nil, false, fmt.Errorf(
+			"verifying certificate %s failed: %w",
+			certificateIdentifier(req.TLS.PeerCertificates[0]),
+			err,
+		)
 	}
 
 	var errlist []error

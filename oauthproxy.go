@@ -109,27 +109,34 @@ func (u *UpstreamProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 }
 
-func NewReverseProxy(target *url.URL, upstreamFlush time.Duration, rootCAs []string) (*httputil.ReverseProxy, error) {
+func NewReverseProxy(target *url.URL, opts *Options) (*httputil.ReverseProxy, error) {
 	proxy := httputil.NewSingleHostReverseProxy(target)
-	proxy.FlushInterval = upstreamFlush
+	proxy.FlushInterval = opts.UpstreamFlush
 
-	transport := &http.Transport{
-		MaxIdleConnsPerHost: 500,
-		IdleConnTimeout:     1 * time.Minute,
-	}
-	if len(rootCAs) > 0 {
-		pool, err := util.GetCertPool(rootCAs, false)
+	// Inherit default transport options from Go's stdlib
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+
+	transport.MaxIdleConnsPerHost = 500
+	transport.IdleConnTimeout = 1 * time.Minute
+
+	// Change default duration for waiting for an upstream response
+	transport.ResponseHeaderTimeout = opts.Timeout
+
+	if len(opts.UpstreamCAs) > 0 {
+		pool, err := util.GetCertPool(opts.UpstreamCAs, false)
 		if err != nil {
 			return nil, err
 		}
 		transport.TLSClientConfig = oscrypto.SecureTLSConfig(&tls.Config{RootCAs: pool})
 	}
 	if err := http2.ConfigureTransport(transport); err != nil {
-		if len(rootCAs) > 0 {
+		if len(opts.UpstreamCAs) > 0 {
 			return nil, err
 		}
 		log.Printf("WARN: Failed to configure http2 transport: %v", err)
 	}
+
+	// Apply the customized transport to our proxy before returning it
 	proxy.Transport = transport
 
 	return proxy, nil
@@ -160,7 +167,7 @@ func NewFileServer(path string, filesystemPath string) (proxy http.Handler) {
 
 func NewWebSocketOrRestReverseProxy(u *url.URL, opts *Options, auth hmacauth.HmacAuth) (restProxy http.Handler) {
 	u.Path = ""
-	proxy, err := NewReverseProxy(u, opts.UpstreamFlush, opts.UpstreamCAs)
+	proxy, err := NewReverseProxy(u, opts)
 	if err != nil {
 		log.Fatal("Failed to initialize Reverse Proxy: ", err)
 	}

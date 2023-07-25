@@ -1,14 +1,17 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
 	"net/http"
 	_ "net/http/pprof"
 	"os"
+	"os/signal"
 	"runtime"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -100,6 +103,8 @@ func main() {
 	flagSet.String("signature-key", "", "GAP-Signature request signature key (algorithm:secretkey)")
 	flagSet.Var(upstreamCAs, "upstream-ca", "paths to CA roots for the Upstream (target) Server (may be given multiple times, defaults to system trust store).")
 
+	flagSet.Duration("upstream-timeout", DefaultUpstreamTimeout, "maximum amount of time the server will wait for a response from the upstream")
+
 	providerOpenShift := openshift.New()
 	providerOpenShift.Bind(flagSet)
 
@@ -169,6 +174,16 @@ func main() {
 		}()
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
+
+	term := make(chan os.Signal, 1)
+	signal.Notify(term, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-term
+		log.Print("received SIGTERM, exiting gracefully...")
+		cancel()
+	}()
+
 	var h http.Handler = oauthproxy
 	if opts.RequestLogging {
 		h = LoggingHandler(os.Stdout, h, true)
@@ -177,5 +192,5 @@ func main() {
 		Handler: h,
 		Opts:    opts,
 	}
-	s.ListenAndServe()
+	s.ListenAndServe(ctx)
 }
