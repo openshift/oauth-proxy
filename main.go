@@ -164,6 +164,7 @@ func main() {
 		if err != nil {
 			log.Fatalf("FATAL: unable to open %s %s", opts.HtpasswdFile, err)
 		}
+		defer oauthproxy.HtpasswdFile.Close()
 	}
 
 	if opts.DebugAddress != "" {
