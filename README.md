@@ -181,10 +181,10 @@ To build, run:
 $ go test .
 ```
 
-The docker images for this repository are built by [the OpenShift release process](https://github.com/openshift/release/blob/master/projects/oauth-proxy/pipeline.yaml) and are available at
+The docker images for this repository are built by [the OpenShift release process](https://github.com/openshift/release/tree/master/ci-operator/config/openshift/oauth-proxy) and are available at
 
 ```
-$ docker pull registry.svc.ci.openshift.org/ci/oauth-proxy:v1
+$ podman pull quay.io/openshift/origin-oauth-proxy:latest
 ```
 
 ## End-to-end testing
