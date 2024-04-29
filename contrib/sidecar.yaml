@@ -50,7 +50,7 @@ items:
         serviceAccountName: proxy
         containers:
         - name: oauth-proxy
-          image: openshift/oauth-proxy:latest
+          image: quay.io/openshift/origin-oauth-proxy:latest
           imagePullPolicy: IfNotPresent
           ports:
           - containerPort: 8443
@@ -66,9 +66,8 @@ items:
           volumeMounts:
           - mountPath: /etc/tls/private
             name: proxy-tls
-
         - name: app
-          image: openshift/hello-openshift:latest
+          image: quay.io/openshift/origin-hello-openshift:latest
         volumes:
         - name: proxy-tls
           secret:
