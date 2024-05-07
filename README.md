@@ -239,7 +239,7 @@ Usage of oauth-proxy:
   -display-htpasswd-form: display username / password login form if an htpasswd file is provided (default true)
   -email-domain value: authenticate emails with the specified domain (may be given multiple times). Use * to authenticate any email
   -footer string: custom footer string. Use "-" to disable default footer.
-  -htpasswd-file string: additionally authenticate against a htpasswd file. Entries must be created with "htpasswd -s" for SHA encryption
+  -htpasswd-file string: additionally authenticate against a htpasswd file. Entries must be created with "htpasswd -s" for SHA encryption or "htpasswd -B" for Bcrypt encryption (preferred)
   -http-address string: [http://]<addr>:<port> or unix://<path> to listen on for HTTP clients (default "127.0.0.1:4180")
   -https-address string: <addr>:<port> to listen on for HTTPS clients (default ":443")
   -login-url string: Authentication endpoint
