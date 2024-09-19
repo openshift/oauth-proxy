@@ -40,6 +40,8 @@ func TestOAuthProxyE2E(t *testing.T) {
 	routeClient, err := routeclient.NewForConfig(testConfig)
 	require.NoError(t, err)
 	userClient, err := userclient.NewForConfig(testConfig)
+	require.NoError(t, err)
+	require.NoError(t, err)
 	ns := CreateTestProject(t, kubeClient, projectClient)
 	defer func() {
 		if len(os.Getenv("DEBUG_TEST")) > 0 {
@@ -186,6 +188,19 @@ func TestOAuthProxyE2E(t *testing.T) {
 		// 	expectedErr: "did not reach upstream site",
 		// },
 	}
+
+	// Get the image from a pod that we know uses oauth-proxy to wrap
+	// its endpoints with OpenShift auth
+	// TODO: is there a better way?
+	alertmanagerPod, err := kubeClient.CoreV1().Pods("openshift-monitoring").Get(testCtx, "alertmanager-main-0", metav1.GetOptions{})
+	require.NoError(t, err)
+	var image string
+	for _, c := range alertmanagerPod.Spec.Containers {
+		if c.Name == "alertmanager-proxy" {
+			image = c.Image
+		}
+	}
+	require.NotEmpty(t, image)
 
 	// Get the image from a pod that we know uses oauth-proxy to wrap
 	// its endpoints with OpenShift auth
