@@ -188,6 +188,7 @@ func TestOAuthProxyE2E(t *testing.T) {
 		// 	expectedErr: "did not reach upstream site",
 		// },
 	}
+<<<<<<< HEAD
 
 	// Get the image from a pod that we know uses oauth-proxy to wrap
 	// its endpoints with OpenShift auth
@@ -201,20 +202,18 @@ func TestOAuthProxyE2E(t *testing.T) {
 		}
 	}
 	require.NotEmpty(t, image)
+=======
+	registry := strings.Split(os.Getenv("RELEASE_IMAGE_LATEST"), "/")[0]
+	require.NotEmpty(t, registry, "Registry is empty. Check RELEASE_IMAGE_LATEST environment variable.")
+	namespace := os.Getenv("NAMESPACE")
+	require.NotEmpty(t, namespace, "Namespace is empty. Check NAMESPACE environment variable.")
+	image := registry + "/" + namespace + "/pipeline:oauth-proxy"
+>>>>>>> 6dc14c47 (added debugging lines, to see outputs)
 
-	// Get the image from a pod that we know uses oauth-proxy to wrap
-	// its endpoints with OpenShift auth
-	// TODO: is there a better way?
-	alertmanagerPod, err := kubeClient.CoreV1().Pods("openshift-monitoring").Get(testCtx, "alertmanager-main-0", metav1.GetOptions{})
-	require.NoError(t, err)
-	var image string
-	for _, c := range alertmanagerPod.Spec.Containers {
-		if c.Name == "alertmanager-proxy" {
-			image = c.Image
-		}
-	}
-	require.NotEmpty(t, image)
-
+	// Print values for debugging
+	fmt.Println("Registry:", registry)
+	fmt.Println("Namespace:", namespace)
+	fmt.Println("Image:", image)
 	// get rid of kubeadmin user to remove the additional step of choosing an idp
 	err = kubeClient.CoreV1().Secrets("kube-system").Delete(context.TODO(), "kubeadmin", metav1.DeleteOptions{})
 	if err != nil && !errors.IsNotFound(err) {
