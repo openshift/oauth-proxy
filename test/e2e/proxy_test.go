@@ -210,10 +210,6 @@ func TestOAuthProxyE2E(t *testing.T) {
 	image := registry + "/" + namespace + "/pipeline:oauth-proxy"
 >>>>>>> 6dc14c47 (added debugging lines, to see outputs)
 
-	// Print values for debugging
-	fmt.Println("Registry:", registry)
-	fmt.Println("Namespace:", namespace)
-	fmt.Println("Image:", image)
 	// get rid of kubeadmin user to remove the additional step of choosing an idp
 	err = kubeClient.CoreV1().Secrets("kube-system").Delete(context.TODO(), "kubeadmin", metav1.DeleteOptions{})
 	if err != nil && !errors.IsNotFound(err) {
