@@ -826,6 +826,9 @@ func (p *OAuthProxy) Authenticate(rw http.ResponseWriter, req *http.Request) int
 	}
 	if ((!tokenProvidedByClient && p.PassAccessToken) || (tokenProvidedByClient && p.PassUserBearerToken)) && session.AccessToken != "" {
 		req.Header["X-Forwarded-Access-Token"] = []string{session.AccessToken}
+		if p.SetXAuthRequest {
+			rw.Header().Set("X-Auth-Request-Access-Token", session.AccessToken)
+		}
 	}
 	if session.Email == "" {
 		rw.Header().Set("GAP-Auth", session.User)

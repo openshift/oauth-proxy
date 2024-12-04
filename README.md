@@ -243,7 +243,7 @@ Usage of oauth-proxy:
   -http-address string: [http://]<addr>:<port> or unix://<path> to listen on for HTTP clients (default "127.0.0.1:4180")
   -https-address string: <addr>:<port> to listen on for HTTPS clients (default ":443")
   -login-url string: Authentication endpoint
-  -pass-access-token: pass OAuth access_token to upstream via X-Forwarded-Access-Token header
+  -pass-access-token: pass OAuth access_token to upstream via X-Forwarded-Access-Token header. When used with `-set-xauthrequest` this adds the X-Auth-Request-Access-Token header to the response.
   -pass-user-bearer-token: pass OAuth access token received from the client to upstream via X-Forwarded-Access-Token header
   -pass-basic-auth: pass HTTP Basic Auth, X-Forwarded-User and X-Forwarded-Email information to upstream (default true)
   -pass-host-header: pass the request Host Header to upstream (default true)
@@ -256,7 +256,7 @@ Usage of oauth-proxy:
   -redirect-url string: the OAuth Redirect URL. ie: "https://internalapp.yourcompany.com/oauth2/callback"
   -request-logging: Log requests to stdout (default false)
   -scope string: OAuth scope specification
-  -set-xauthrequest: set X-Auth-Request-User and X-Auth-Request-Email response headers (useful in Nginx auth_request mode)
+  -set-xauthrequest: set X-Auth-Request-User and X-Auth-Request-Email response headers (useful in Nginx auth_request mode). When used with `-pass-access-token`, X-Auth-Request-Access-Token is added to response headers.
   -signature-key string: GAP-Signature request signature key (algorithm:secretkey)
   -skip-auth-preflight: will skip authentication for OPTIONS requests
   -skip-auth-regex value: bypass authentication for requests path's that match (may be given multiple times). Cannot be set with -bypass-auth-except-for
