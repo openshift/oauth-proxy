@@ -40,8 +40,11 @@ func TestOAuthProxyE2E(t *testing.T) {
 	routeClient, err := routeclient.NewForConfig(testConfig)
 	require.NoError(t, err)
 	userClient, err := userclient.NewForConfig(testConfig)
+<<<<<<< HEAD
 	require.NoError(t, err)
 	require.NoError(t, err)
+=======
+>>>>>>> ac125b0f (Revert "test/e2e/proxy_test.go: Use registry and pipeline for image")
 	ns := CreateTestProject(t, kubeClient, projectClient)
 	defer func() {
 		if len(os.Getenv("DEBUG_TEST")) > 0 {
@@ -213,9 +216,18 @@ func TestOAuthProxyE2E(t *testing.T) {
 =======
 >>>>>>> c0e12557 (Revert "added debugging lines, to see outputs")
 
-	registry := strings.Split(os.Getenv("RELEASE_IMAGE_LATEST"), "/")[0]
-	require.NotEmpty(t, registry)
-	image := registry + "/" + os.Getenv("NAMESPACE") + "/pipeline:oauth-proxy"
+	// Get the image from a pod that we know uses oauth-proxy to wrap
+	// its endpoints with OpenShift auth
+	// TODO: is there a better way?
+	alertmanagerPod, err := kubeClient.CoreV1().Pods("openshift-monitoring").Get(testCtx, "alertmanager-main-0", metav1.GetOptions{})
+	require.NoError(t, err)
+	var image string
+	for _, c := range alertmanagerPod.Spec.Containers {
+		if c.Name == "alertmanager-proxy" {
+			image = c.Image
+		}
+	}
+	require.NotEmpty(t, image)
 
 	// get rid of kubeadmin user to remove the additional step of choosing an idp
 	err = kubeClient.CoreV1().Secrets("kube-system").Delete(context.TODO(), "kubeadmin", metav1.DeleteOptions{})
