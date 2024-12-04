@@ -189,6 +189,7 @@ func TestOAuthProxyE2E(t *testing.T) {
 		// },
 	}
 <<<<<<< HEAD
+<<<<<<< HEAD
 
 	// Get the image from a pod that we know uses oauth-proxy to wrap
 	// its endpoints with OpenShift auth
@@ -209,11 +210,13 @@ func TestOAuthProxyE2E(t *testing.T) {
 	require.NotEmpty(t, namespace, "Namespace is empty. Check NAMESPACE environment variable.")
 	image := registry + "/" + namespace + "/pipeline:oauth-proxy"
 >>>>>>> 6dc14c47 (added debugging lines, to see outputs)
+=======
+>>>>>>> c0e12557 (Revert "added debugging lines, to see outputs")
 
-	// Print values for debugging
-	fmt.Println("Registry:", registry)
-	fmt.Println("Namespace:", namespace)
-	fmt.Println("Image:", image)
+	registry := strings.Split(os.Getenv("RELEASE_IMAGE_LATEST"), "/")[0]
+	require.NotEmpty(t, registry)
+	image := registry + "/" + os.Getenv("NAMESPACE") + "/pipeline:oauth-proxy"
+
 	// get rid of kubeadmin user to remove the additional step of choosing an idp
 	err = kubeClient.CoreV1().Secrets("kube-system").Delete(context.TODO(), "kubeadmin", metav1.DeleteOptions{})
 	if err != nil && !errors.IsNotFound(err) {
