@@ -40,11 +40,7 @@ func TestOAuthProxyE2E(t *testing.T) {
 	routeClient, err := routeclient.NewForConfig(testConfig)
 	require.NoError(t, err)
 	userClient, err := userclient.NewForConfig(testConfig)
-<<<<<<< HEAD
 	require.NoError(t, err)
-	require.NoError(t, err)
-=======
->>>>>>> ac125b0f (Revert "test/e2e/proxy_test.go: Use registry and pipeline for image")
 	ns := CreateTestProject(t, kubeClient, projectClient)
 	defer func() {
 		if len(os.Getenv("DEBUG_TEST")) > 0 {
