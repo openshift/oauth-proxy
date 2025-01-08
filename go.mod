@@ -15,8 +15,8 @@ require (
 	github.com/openshift/library-go v0.0.0-20200918101923-1e4c94603efe
 	github.com/stretchr/testify v1.4.0
 	github.com/yhat/wsutil v0.0.0-20170731153501-1d66fa95c997
-	golang.org/x/crypto v0.0.0-20200622213623-75b288015ac9
-	golang.org/x/net v0.0.0-20210813160813-60bc85c4be6d
+	golang.org/x/crypto v0.31.0
+	golang.org/x/net v0.33.0
 	k8s.io/api v0.19.2
 	k8s.io/apimachinery v0.19.2
 	k8s.io/apiserver v0.19.2
@@ -38,7 +38,7 @@ require (
 	github.com/gogo/protobuf v1.3.1 // indirect
 	github.com/golang/groupcache v0.0.0-20191227052852-215e87163ea7 // indirect
 	github.com/golang/protobuf v1.4.2 // indirect
-	github.com/google/go-cmp v0.4.0 // indirect
+	github.com/google/go-cmp v0.6.0 // indirect
 	github.com/google/gofuzz v1.1.0 // indirect
 	github.com/google/uuid v1.1.1 // indirect
 	github.com/googleapis/gnostic v0.4.1 // indirect
@@ -58,9 +58,10 @@ require (
 	github.com/prometheus/procfs v0.1.3 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
 	golang.org/x/oauth2 v0.0.0-20191202225959-858c2ad4c8b6 // indirect
-	golang.org/x/sync v0.0.0-20190911185100-cd5d95a43a6e // indirect
-	golang.org/x/sys v0.0.0-20210423082822-04245dca01da // indirect
-	golang.org/x/text v0.3.6 // indirect
+	golang.org/x/sync v0.10.0 // indirect
+	golang.org/x/sys v0.28.0 // indirect
+	golang.org/x/term v0.27.0 // indirect
+	golang.org/x/text v0.21.0 // indirect
 	golang.org/x/time v0.0.0-20191024005414-555d28b269f0 // indirect
 	google.golang.org/appengine v1.6.5 // indirect
 	google.golang.org/genproto v0.0.0-20200526211855-cb27e3aa2013 // indirect
