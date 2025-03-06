@@ -463,11 +463,10 @@ func (p *OAuthProxy) ErrorPage(rw http.ResponseWriter, code int, title string, m
 	p.templates.ExecuteTemplate(rw, "error.html", t)
 }
 
-func (p *OAuthProxy) SignInPage(rw http.ResponseWriter, req *http.Request, code int) {
+func (p *OAuthProxy) SignInPage(rw http.ResponseWriter, req *http.Request, redirect_url string, code int) {
 	p.ClearSessionCookie(rw, req)
 	rw.WriteHeader(code)
 
-	redirect_url := req.URL.RequestURI()
 	if req.Header.Get("X-Auth-Request-Redirect") != "" {
 		redirect_url = req.Header.Get("X-Auth-Request-Redirect")
 	}
@@ -595,13 +594,15 @@ func (p *OAuthProxy) SignIn(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	log.Printf("Using %s redirect URL", redirect)
+
 	user, ok := p.ManualSignIn(rw, req)
 	if ok {
 		session := &providers.SessionState{User: user}
 		p.SaveSession(rw, req, session)
 		http.Redirect(rw, req, redirect, 302)
 	} else {
-		p.SignInPage(rw, req, 200)
+		p.SignInPage(rw, req, redirect, 200)
 	}
 }
 
@@ -720,7 +721,7 @@ func (p *OAuthProxy) Proxy(rw http.ResponseWriter, req *http.Request) {
 		if p.SkipProviderButton {
 			p.OAuthStart(rw, req)
 		} else {
-			p.SignInPage(rw, req, http.StatusForbidden)
+			p.SignInPage(rw, req, req.URL.RequestURI(), http.StatusForbidden)
 		}
 	} else {
 		p.serveMux.ServeHTTP(rw, req)

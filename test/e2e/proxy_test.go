@@ -412,7 +412,11 @@ func testOAuthProxyLogin(t *testing.T, transport http.RoundTripper, host, subPat
 	}
 
 	if authenticateResp.Request.Host != host {
-		return fmt.Errorf("did not reach upstream site")
+		return fmt.Errorf(
+			"did not reach upstream site. expected host: %s. actual host: %s",
+			host,
+			authenticateResp.Request.Host,
+		)
 	}
 
 	authenticatedContent, err := ioutil.ReadAll(authenticateResp.Body)
