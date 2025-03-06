@@ -372,6 +372,7 @@ oauth-proxy responds directly to the following endpoints. All other endpoints wi
 * /oauth/start - a URL that will redirect to start the OAuth cycle
 * /oauth/callback - the URL used at the end of the OAuth cycle. The oauth app will be configured with this as the callback url.
 * /oauth/auth - only returns a 202 Accepted response or a 401 Unauthorized response; for use with the [Nginx `auth_request` directive](#nginx-auth-request)
+* /oauth/userinfo - the URL is used to return user's email and name from the session in JSON format.
 
 ## Request signatures
 

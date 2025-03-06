@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/tls"
 	b64 "encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"html/template"
@@ -61,6 +62,7 @@ type OAuthProxy struct {
 	OAuthStartPath    string
 	OAuthCallbackPath string
 	AuthOnlyPath      string
+	UserInfoPath      string
 
 	LogoutRedirectURL string
 
@@ -278,6 +280,7 @@ func NewOAuthProxy(opts *Options, validator func(string) bool) *OAuthProxy {
 		OAuthStartPath:    fmt.Sprintf("%s/start", opts.ProxyPrefix),
 		OAuthCallbackPath: fmt.Sprintf("%s/callback", opts.ProxyPrefix),
 		AuthOnlyPath:      fmt.Sprintf("%s/auth", opts.ProxyPrefix),
+		UserInfoPath:      fmt.Sprintf("%s/userinfo", opts.ProxyPrefix),
 
 		LogoutRedirectURL: opts.LogoutRedirectURL,
 
@@ -583,6 +586,8 @@ func (p *OAuthProxy) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		p.OAuthCallback(rw, req)
 	case path == p.AuthOnlyPath:
 		p.AuthenticateOnly(rw, req)
+	case path == p.UserInfoPath:
+		p.UserInfo(rw, req)
 	default:
 		p.Proxy(rw, req)
 	}
@@ -727,7 +732,7 @@ func (p *OAuthProxy) Proxy(rw http.ResponseWriter, req *http.Request) {
 	}
 }
 
-func (p *OAuthProxy) Authenticate(rw http.ResponseWriter, req *http.Request) int {
+func (p *OAuthProxy) getAuthenticatedSession(rw http.ResponseWriter, req *http.Request) (*providers.SessionState, bool, error) {
 	var saveSession, clearSession, revalidated bool
 	remoteAddr := getRemoteAddr(req)
 
@@ -776,7 +781,7 @@ func (p *OAuthProxy) Authenticate(rw http.ResponseWriter, req *http.Request) int
 		err := p.SaveSession(rw, req, session)
 		if err != nil {
 			log.Printf("%s %s", remoteAddr, err)
-			return http.StatusInternalServerError
+			return nil, false, err
 		}
 	}
 
@@ -798,6 +803,16 @@ func (p *OAuthProxy) Authenticate(rw http.ResponseWriter, req *http.Request) int
 			log.Printf("requestauth: %s %s", remoteAddr, err)
 		}
 		tokenProvidedByClient = true
+	}
+
+	return session, tokenProvidedByClient, nil
+}
+
+func (p *OAuthProxy) Authenticate(rw http.ResponseWriter, req *http.Request) int {
+	session, tokenProvidedByClient, err := p.getAuthenticatedSession(rw, req)
+
+	if err != nil {
+		return http.StatusInternalServerError
 	}
 
 	if session == nil {
@@ -885,5 +900,27 @@ func parseSameSite(v string) http.SameSite {
 		return http.SameSiteDefaultMode
 	default:
 		panic(fmt.Sprintf("Invalid value for SameSite: %s", v))
+	}
+}
+
+// UserInfo endpoint outputs session details in JSON format
+func (p *OAuthProxy) UserInfo(rw http.ResponseWriter, req *http.Request) {
+	session, _, err := p.getAuthenticatedSession(rw, req)
+	if err != nil || session == nil {
+		http.Error(rw, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
+		return
+	}
+
+	userInfo := struct {
+		User  string `json:"user"`
+		Email string `json:"email"`
+	}{
+		User:  session.User,
+		Email: session.Email,
+	}
+
+	if err := json.NewEncoder(rw).Encode(userInfo); err != nil {
+		log.Printf("Error encoding user info: %v", err)
+		p.ErrorPage(rw, http.StatusInternalServerError, "Error encoding user info", err.Error())
 	}
 }
