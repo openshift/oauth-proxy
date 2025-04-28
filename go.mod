@@ -16,7 +16,7 @@ require (
 	github.com/openshift/library-go v0.0.0-20230724150037-c515269de16e
 	github.com/stretchr/testify v1.8.1
 	github.com/yhat/wsutil v0.0.0-20170731153501-1d66fa95c997
-	golang.org/x/crypto v0.14.0
+	golang.org/x/crypto v0.37.0
 	golang.org/x/net v0.17.0
 	k8s.io/api v0.27.4
 	k8s.io/apimachinery v0.27.4
