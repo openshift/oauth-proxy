@@ -517,7 +517,11 @@ func check3DESDisabled(t *testing.T, proxyURL string, proxyCA []byte) {
 		t.Fatalf("error loading CA for client config")
 	}
 
-	jar, _ := cookiejar.New(nil)
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatalf("error creating cookie jar: %v", err)
+	}
+
 	tr := &http.Transport{
 		MaxIdleConns:    10,
 		IdleConnTimeout: 30 * time.Second,
