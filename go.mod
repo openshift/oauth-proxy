@@ -2,8 +2,6 @@ module github.com/openshift/oauth-proxy
 
 go 1.22.0
 
-toolchain go1.24.0
-
 require (
 	github.com/18F/hmacauth v0.0.0-20151013130326-9232a6386b73
 	github.com/BurntSushi/toml v0.3.1
