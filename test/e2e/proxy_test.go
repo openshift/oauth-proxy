@@ -30,7 +30,7 @@ import (
 )
 
 func TestOAuthProxyE2E(t *testing.T) {
-	testCtx := context.Background()
+	ctx := context.Background()
 
 	testConfig := NewClientConfigForTest(t)
 	kubeClient, err := kubernetes.NewForConfig(testConfig)
@@ -48,7 +48,7 @@ func TestOAuthProxyE2E(t *testing.T) {
 		if len(os.Getenv("DEBUG_TEST")) > 0 {
 			return
 		}
-		kubeClient.CoreV1().Namespaces().Delete(testCtx, ns, metav1.DeleteOptions{})
+		kubeClient.CoreV1().Namespaces().Delete(ctx, ns, metav1.DeleteOptions{})
 	}()
 
 	testCases := []struct {
@@ -206,7 +206,7 @@ func TestOAuthProxyE2E(t *testing.T) {
 		}
 
 		t.Run(fmt.Sprintf("setting up e2e tests %s", tc.name), func(t *testing.T) {
-			_, err := kubeClient.CoreV1().ServiceAccounts(ns).Create(testCtx, newOAuthProxySA(tc.name), metav1.CreateOptions{})
+			_, err := kubeClient.CoreV1().ServiceAccounts(ns).Create(ctx, newOAuthProxySA(tc.name), metav1.CreateOptions{})
 			if err != nil {
 				t.Fatalf("setup: error creating SA: %s", err)
 			}
@@ -225,18 +225,18 @@ func TestOAuthProxyE2E(t *testing.T) {
 				t.Fatalf("setup: error creating upstream TLS certs: %s", err)
 			}
 
-			_, err = kubeClient.CoreV1().Services(ns).Create(testCtx, newOAuthProxyService(tc.name), metav1.CreateOptions{})
+			_, err = kubeClient.CoreV1().Services(ns).Create(ctx, newOAuthProxyService(tc.name), metav1.CreateOptions{})
 			if err != nil {
 				t.Fatalf("setup: error creating service: %s", err)
 			}
 
 			// configMap provides oauth-proxy with the certificates we created above
-			_, err = kubeClient.CoreV1().ConfigMaps(ns).Create(testCtx, newOAuthProxyConfigMap(ns, tc.name, caPem, serviceCert, serviceKey, upstreamCA, upstreamCert, upstreamKey), metav1.CreateOptions{})
+			_, err = kubeClient.CoreV1().ConfigMaps(ns).Create(ctx, newOAuthProxyConfigMap(ns, tc.name, caPem, serviceCert, serviceKey, upstreamCA, upstreamCert, upstreamKey), metav1.CreateOptions{})
 			if err != nil {
 				t.Fatalf("setup: error creating certificate configMap: %s", err)
 			}
 
-			oauthProxyPod, err := kubeClient.CoreV1().Pods(ns).Create(testCtx, newOAuthProxyPod(image, backendImage, tc.name, tc.proxyArgs), metav1.CreateOptions{})
+			oauthProxyPod, err := kubeClient.CoreV1().Pods(ns).Create(ctx, newOAuthProxyPod(image, backendImage, tc.name, tc.proxyArgs), metav1.CreateOptions{})
 			if err != nil {
 				t.Fatalf("setup: error creating oauth-proxy pod with image '%s' and args '%v': %s", image, tc.proxyArgs, err)
 			}
@@ -258,22 +258,25 @@ func TestOAuthProxyE2E(t *testing.T) {
 
 			user := users[currentTestIdx]
 			// For SAR tests the random user needs the admin role for this namespace.
-			out, err := execCmd("oc", []string{"adm", "policy", "add-role-to-user", "admin", user, "-n", ns, "--rolebinding-name", "sar-" + user}, "")
+			t.Logf("Setting admin role for user %s in namespace %s", user, ns)
+			roleBinding := newOAuthProxyRoleBinding(user, ns)
+			_, err = kubeClient.RbacV1().RoleBindings(ns).
+				Create(ctx, roleBinding, metav1.CreateOptions{})
 			if err != nil {
 				t.Fatalf("setup: error setting test user role: %s", err)
 			}
-			t.Logf("%s", out)
+			defer func() {
+				_ = kubeClient.RbacV1().RoleBindings(ns).
+					Delete(ctx, "sar-"+user, metav1.DeleteOptions{})
+			}()
 
 			defer func() {
-				if os.Getenv("DEBUG_TEST") == tc.name {
-					t.Fatalf("skipping cleanup step for test '%s' and stopping on command", tc.name)
-				}
 				t.Logf("cleaning up test %s", tc.name)
-				kubeClient.CoreV1().Pods(ns).Delete(testCtx, "proxy", metav1.DeleteOptions{})
-				kubeClient.CoreV1().Services(ns).Delete(testCtx, "proxy", metav1.DeleteOptions{})
-				deleteTestRoute("proxy-route", ns)
-				kubeClient.CoreV1().ConfigMaps(ns).Delete(testCtx, "proxy-certs", metav1.DeleteOptions{})
-				kubeClient.CoreV1().ServiceAccounts(ns).Delete(testCtx, "proxy", metav1.DeleteOptions{})
+				kubeClient.CoreV1().Pods(ns).Delete(ctx, "proxy", metav1.DeleteOptions{})
+				kubeClient.CoreV1().Services(ns).Delete(ctx, "proxy", metav1.DeleteOptions{})
+				deleteTestRoute(t, routeClient, "proxy-route")
+				kubeClient.CoreV1().ConfigMaps(ns).Delete(ctx, "proxy-certs", metav1.DeleteOptions{})
+				kubeClient.CoreV1().ServiceAccounts(ns).Delete(ctx, "proxy", metav1.DeleteOptions{})
 				waitForPodDeletion(kubeClient, oauthProxyPod.Name, ns)
 				execCmd("oc", []string{"adm", "policy", "remove-role-from-user", "admin", user, "-n", ns}, "")
 			}()
