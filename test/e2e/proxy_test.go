@@ -158,34 +158,6 @@ func TestOAuthProxyE2E(t *testing.T) {
 			pageResult:    "URI: /bar",
 			bypass:        true,
 		},
-		// TODO: find or write a containerized test http server that allows simple TLS config
-		// --upstream-ca set with the CA for the backend site's certificate
-		// "upstream-ca": {
-		// 	oauthProxyArgs: []string{
-		// 		"--upstream=https://localhost:8080",
-		// 		"--upstream-ca=/etc/tls/private/upstreamca.crt",
-		// 	},
-		// 	backendEnvs: []string{"HELLO_TLS_CERT=/etc/tls/private/upstream.crt", "HELLO_TLS_KEY=/etc/tls/private/upstream.key"},
-		// 	pageResult:  "URI: /",
-		// },
-		// // --upstream-ca set multiple times, with one matching CA
-		// "upstream-ca-multi": {
-		// 	oauthProxyArgs: []string{
-		// 		"--upstream=https://localhost:8080",
-		// 		"--upstream-ca=/etc/tls/private/upstreamca.crt",
-		// 		"--upstream-ca=/etc/tls/private/ca.crt",
-		// 	},
-		// 	backendEnvs: []string{"HELLO_TLS_CERT=/etc/tls/private/upstream.crt", "HELLO_TLS_KEY=/etc/tls/private/upstream.key"},
-		// 	pageResult:  "URI: /",
-		// },
-		// // no --upstream-ca set, so there's no valid TLS connection between proxy and upstream
-		// "upstream-ca-missing": {
-		// 	oauthProxyArgs: []string{
-		// 		"--upstream=https://localhost:8080",
-		// 	},
-		// 	backendEnvs: []string{"HELLO_TLS_CERT=/etc/tls/private/upstream.crt", "HELLO_TLS_KEY=/etc/tls/private/upstream.key"},
-		// 	expectedErr: "did not reach upstream site",
-		// },
 	}
 	registry := strings.Split(os.Getenv("RELEASE_IMAGE_LATEST"), "/")[0]
 	require.NotEmpty(t, registry, "Registry is empty. Check RELEASE_IMAGE_LATEST environment variable.")
