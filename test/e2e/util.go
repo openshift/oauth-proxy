@@ -55,11 +55,14 @@ const (
 	defaultTimeout = 30 * time.Second
 )
 
-func CreateTestProjectWithCancel(t *testing.T, kubeClient kubernetes.Interface) (string, func()) {
+func CreateTestProjectWithCancel(
+	ctx context.Context, t *testing.T,
+	kubeClient kubernetes.Interface,
+) (string, func()) {
 	newNamespace := names.SimpleNameGenerator.GenerateName("e2e-oauth-proxy-")
 
 	ns, err := kubeClient.CoreV1().Namespaces().Create(
-		context.Background(),
+		ctx,
 		&corev1.Namespace{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: newNamespace,
@@ -72,19 +75,22 @@ func CreateTestProjectWithCancel(t *testing.T, kubeClient kubernetes.Interface) 
 	)
 	require.NoError(t, err)
 
-	err = waitForSelfSAR(1*time.Second, 60*time.Second, kubeClient, authorizationv1.SelfSubjectAccessReviewSpec{
-		ResourceAttributes: &authorizationv1.ResourceAttributes{
-			Namespace: newNamespace,
-			Verb:      "create",
-			Group:     "",
-			Resource:  "pods",
+	err = waitForSelfSAR(
+		ctx, 1*time.Second, 60*time.Second,
+		kubeClient, authorizationv1.SelfSubjectAccessReviewSpec{
+			ResourceAttributes: &authorizationv1.ResourceAttributes{
+				Namespace: newNamespace,
+				Verb:      "create",
+				Group:     "",
+				Resource:  "pods",
+			},
 		},
-	})
+	)
 	require.NoError(t, err)
 
 	return newNamespace, func() {
 		err = kubeClient.CoreV1().Namespaces().Delete(
-			context.Background(), ns.Name, metav1.DeleteOptions{},
+			ctx, ns.Name, metav1.DeleteOptions{},
 		)
 		if err != nil {
 			t.Errorf("Error deleting test namespace %s: %v", ns.Name, err)
@@ -92,10 +98,16 @@ func CreateTestProjectWithCancel(t *testing.T, kubeClient kubernetes.Interface) 
 	}
 }
 
-func waitForSelfSAR(interval, timeout time.Duration, c kubernetes.Interface, selfSAR authorizationv1.SelfSubjectAccessReviewSpec) error {
+func waitForSelfSAR(
+	ctx context.Context,
+	interval,
+	timeout time.Duration,
+	c kubernetes.Interface,
+	selfSAR authorizationv1.SelfSubjectAccessReviewSpec,
+) error {
 	err := wait.PollImmediate(interval, timeout, func() (bool, error) {
 		res, err := c.AuthorizationV1().SelfSubjectAccessReviews().Create(
-			context.Background(),
+			ctx,
 			&authorizationv1.SelfSubjectAccessReview{
 				Spec: selfSAR,
 			},
@@ -109,7 +121,10 @@ func waitForSelfSAR(interval, timeout time.Duration, c kubernetes.Interface, sel
 	})
 
 	if err != nil {
-		return fmt.Errorf("failed to wait for SelfSAR (ResourceAttributes: %#v, NonResourceAttributes: %#v), err: %v", selfSAR.ResourceAttributes, selfSAR.NonResourceAttributes, err)
+		return fmt.Errorf(
+			"failed to wait for SelfSAR (ResourceAttributes: %#v, NonResourceAttributes: %#v), err: %v",
+			selfSAR.ResourceAttributes, selfSAR.NonResourceAttributes, err,
+		)
 	}
 
 	return nil
@@ -117,16 +132,16 @@ func waitForSelfSAR(interval, timeout time.Duration, c kubernetes.Interface, sel
 
 // Waits default amount of time (PodStartTimeout) for the specified pod to become running.
 // Returns an error if timeout occurs first, or pod goes in to failed state.
-func waitForPodRunningInNamespace(c kubernetes.Interface, pod *corev1.Pod) error {
+func waitForPodRunningInNamespace(ctx context.Context, c kubernetes.Interface, pod *corev1.Pod) error {
 	if pod.Status.Phase == corev1.PodRunning {
 		return nil
 	}
-	return wait.PollImmediate(Poll, defaultTimeout, podRunning(c, pod.Name, pod.Namespace))
+	return wait.PollImmediate(Poll, defaultTimeout, podRunning(ctx, c, pod.Name, pod.Namespace))
 
 }
 
-func waitForPodDeletion(c kubernetes.Interface, podName, namespace string) error {
-	return wait.PollImmediate(Poll, defaultTimeout, podDeleted(c, podName, namespace))
+func waitForPodDeletion(ctx context.Context, c kubernetes.Interface, podName, namespace string) error {
+	return wait.PollImmediate(Poll, defaultTimeout, podDeleted(ctx, c, podName, namespace))
 }
 
 func waitForHealthzCheck(t *testing.T, transport http.RoundTripper, url string) error {
@@ -144,9 +159,9 @@ func waitForHealthzCheck(t *testing.T, transport http.RoundTripper, url string) 
 	})
 }
 
-func podDeleted(c kubernetes.Interface, podName, namespace string) wait.ConditionFunc {
+func podDeleted(ctx context.Context, c kubernetes.Interface, podName, namespace string) wait.ConditionFunc {
 	return func() (bool, error) {
-		_, err := c.CoreV1().Pods(namespace).Get(context.Background(), podName, metav1.GetOptions{})
+		_, err := c.CoreV1().Pods(namespace).Get(ctx, podName, metav1.GetOptions{})
 		if err != nil {
 			if errors.IsNotFound(err) {
 				return true, nil
@@ -157,9 +172,9 @@ func podDeleted(c kubernetes.Interface, podName, namespace string) wait.Conditio
 	}
 }
 
-func podRunning(c kubernetes.Interface, podName, namespace string) wait.ConditionFunc {
+func podRunning(ctx context.Context, c kubernetes.Interface, podName, namespace string) wait.ConditionFunc {
 	return func() (bool, error) {
-		pod, err := c.CoreV1().Pods(namespace).Get(context.Background(), podName, metav1.GetOptions{})
+		pod, err := c.CoreV1().Pods(namespace).Get(ctx, podName, metav1.GetOptions{})
 		if err != nil {
 			return false, err
 		}
@@ -465,6 +480,7 @@ func generateHTPasswdData(users []string) []byte {
 }
 
 func createTestIdP(
+	ctx context.Context,
 	t *testing.T,
 	kubeClient *kubernetes.Clientset,
 	oauthClient configv1client.OAuthInterface,
@@ -472,7 +488,6 @@ func createTestIdP(
 	nsName string,
 	numUsers int,
 ) ([]string, func()) {
-	ctx := context.Background()
 	oauthConfig, err := oauthClient.Get(ctx, "cluster", metav1.GetOptions{})
 	require.NoError(t, err)
 
@@ -566,8 +581,7 @@ func deleteTestRoute(t *testing.T, routeClient routev1client.RouteInterface, rou
 	return routeClient.Delete(ctx, routeName, metav1.DeleteOptions{})
 }
 
-func getRouteHost(t *testing.T, routeClient routev1client.RouteInterface, routeName string) (string, error) {
-	ctx := context.Background()
+func getRouteHost(ctx context.Context, t *testing.T, routeClient routev1client.RouteInterface, routeName string) (string, error) {
 	route, err := routeClient.Get(ctx, routeName, metav1.GetOptions{})
 	if err != nil {
 		return "", err
@@ -603,8 +617,7 @@ func newOAuthProxyService(suffix string) *corev1.Service {
 }
 
 // create a route using oc create directly
-func createOAuthProxyRoute(t *testing.T, routeClient routev1client.RouteInterface, suffix string) string {
-	ctx := context.Background()
+func createOAuthProxyRoute(ctx context.Context, t *testing.T, routeClient routev1client.RouteInterface, suffix string) string {
 	routeName := "proxy-route"
 	serviceName := "proxy"
 	appLabel := "proxy"
@@ -828,8 +841,7 @@ func NewClientConfigForTest(t *testing.T) *rest.Config {
 	return config
 }
 
-func WaitForClusterOperatorStatus(t *testing.T, client configv1client.ConfigV1Interface, available, progressing, degraded *bool) error {
-	ctx := context.Background()
+func WaitForClusterOperatorStatus(ctx context.Context, t *testing.T, client configv1client.ConfigV1Interface, available, progressing, degraded *bool) error {
 	status := map[configv1.ClusterStatusConditionType]bool{} // struct for easy printing the conditions
 	return wait.PollImmediate(time.Second, 10*time.Minute, func() (bool, error) {
 		clusterOperator, err := client.ClusterOperators().Get(ctx, "authentication", metav1.GetOptions{})
