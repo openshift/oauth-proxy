@@ -637,25 +637,35 @@ func createOAuthProxyRoute(t *testing.T, routeClient routev1client.RouteInterfac
 func pint32(i int32) *int32 { return &i }
 func pbool(b bool) *bool    { return &b }
 
-func newOAuthProxySA() *corev1.ServiceAccount {
+func newOAuthProxySA(suffix string) *corev1.ServiceAccount {
+	name := "proxy"
+	routeName := "proxy-route"
+	if suffix != "" {
+		name = fmt.Sprintf("proxy-%s", suffix)
+		routeName = fmt.Sprintf("proxy-route-%s", suffix)
+	}
 	return &corev1.ServiceAccount{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: "proxy",
+			Name: name,
 			Annotations: map[string]string{
-				"serviceaccounts.openshift.io/oauth-redirectreference.primary": `{"kind":"OAuthRedirectReference","apiVersion":"v1","reference":{"kind":"Route","name":"proxy-route"}}`,
+				"serviceaccounts.openshift.io/oauth-redirectreference.primary": fmt.Sprintf(`{"kind":"OAuthRedirectReference","apiVersion":"v1","reference":{"kind":"Route","name":"%s"}}`, routeName),
 			},
 		},
 	}
 }
 
-func newOAuthProxyConfigMap(namespace string, pemCA, pemServerCert, pemServerKey, upstreamCA, upstreamCert, upstreamKey []byte) *corev1.ConfigMap {
+func newOAuthProxyConfigMap(namespace string, suffix string, pemCA, pemServerCert, pemServerKey, upstreamCA, upstreamCert, upstreamKey []byte) *corev1.ConfigMap {
+	name := "proxy-certs"
+	if suffix != "" {
+		name = fmt.Sprintf("proxy-certs-%s", suffix)
+	}
 	return &corev1.ConfigMap{
 		TypeMeta: metav1.TypeMeta{
 			Kind:       "ConfigMap",
 			APIVersion: "v1",
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "proxy-certs",
+			Name:      name,
 			Namespace: namespace,
 		},
 		Data: map[string]string{
@@ -669,7 +679,7 @@ func newOAuthProxyConfigMap(namespace string, pemCA, pemServerCert, pemServerKey
 	}
 }
 
-func newOAuthProxyPod(proxyImage, backendImage string, extraProxyArgs []string, envVars ...string) *corev1.Pod {
+func newOAuthProxyPod(proxyImage, backendImage string, suffix string, extraProxyArgs []string, envVars ...string) *corev1.Pod {
 	backendEnvVars := []corev1.EnvVar{}
 	for _, env := range envVars {
 		e := strings.Split(env, "=")
@@ -679,9 +689,18 @@ func newOAuthProxyPod(proxyImage, backendImage string, extraProxyArgs []string, 
 		backendEnvVars = append(backendEnvVars, corev1.EnvVar{Name: e[0], Value: e[1]})
 	}
 
+	name := "proxy"
+	serviceAccountName := "proxy"
+	configMapName := "proxy-certs"
+	if suffix != "" {
+		name = fmt.Sprintf("proxy-%s", suffix)
+		serviceAccountName = fmt.Sprintf("proxy-%s", suffix)
+		configMapName = fmt.Sprintf("proxy-certs-%s", suffix)
+	}
+
 	proxyArgs := append([]string{
 		"--provider=openshift",
-		"--openshift-service-account=proxy",
+		fmt.Sprintf("--openshift-service-account=%s", serviceAccountName),
 		"--https-address=:8443",
 		"--tls-cert=/etc/tls/private/tls.crt",
 		"--tls-key=/etc/tls/private/tls.key",
@@ -692,9 +711,9 @@ func newOAuthProxyPod(proxyImage, backendImage string, extraProxyArgs []string, 
 
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: "proxy",
+			Name: name,
 			Labels: map[string]string{
-				"app": "proxy",
+				"app": name,
 			},
 		},
 		Spec: corev1.PodSpec{
@@ -708,12 +727,12 @@ func newOAuthProxyPod(proxyImage, backendImage string, extraProxyArgs []string, 
 					Name: "proxy-cert-volume",
 					VolumeSource: corev1.VolumeSource{
 						ConfigMap: &corev1.ConfigMapVolumeSource{
-							LocalObjectReference: corev1.LocalObjectReference{Name: "proxy-certs"},
+							LocalObjectReference: corev1.LocalObjectReference{Name: configMapName},
 						},
 					},
 				},
 			},
-			ServiceAccountName: "proxy",
+			ServiceAccountName: serviceAccountName,
 			Containers: []corev1.Container{
 				{
 					Image:           proxyImage,
@@ -805,4 +824,33 @@ func WaitForClusterOperatorStatus(t *testing.T, client configv1client.ConfigV1In
 		done := availableStatusIsMatch && progressingStatusIsMatch && degradedStatusIsMatch
 		return done, nil
 	})
+}
+
+func getPageTitle(titleElements []*html.Node) string {
+	if len(titleElements) == 0 {
+		return "<no title>"
+	}
+
+	// Get all text content from the title element
+	var titleText strings.Builder
+	for child := titleElements[0].FirstChild; child != nil; child = child.NextSibling {
+		if child.Type == html.TextNode {
+			titleText.WriteString(child.Data)
+		}
+	}
+
+	if titleText.Len() == 0 {
+		return "<empty title>"
+	}
+
+	// Clean up whitespace and normalize
+	result := strings.TrimSpace(titleText.String())
+	result = strings.ReplaceAll(result, "\n", " ")
+	result = strings.ReplaceAll(result, "\t", " ")
+	// Replace multiple spaces with single space
+	for strings.Contains(result, "  ") {
+		result = strings.ReplaceAll(result, "  ", " ")
+	}
+
+	return result
 }

@@ -1,10 +1,12 @@
 package e2e
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"net/http"
 	"net/http/cookiejar"
@@ -302,72 +304,105 @@ func TestOAuthProxyE2E(t *testing.T) {
 	}
 }
 
-func submitOAuthForm(client *http.Client, response *http.Response, user, password, expectedErr string) (*http.Response, error) {
-	bodyParsed, err := html.Parse(response.Body)
+func confirmOAuthFlow(client *http.Client, requestURL, user, password,
+	expectedErr string, expectBypass bool) error {
+	authorizeResponse, err := client.Get(requestURL)
 	if err != nil {
-		return nil, err
+		return fmt.Errorf("OAuth flow failed to get authorization page: %v", err)
+	}
+	defer authorizeResponse.Body.Close()
+	if authorizeResponse.StatusCode != 200 {
+		r, _ := io.ReadAll(authorizeResponse.Body)
+		return fmt.Errorf("OAuth authorization page returned status %s: %s",
+			authorizeResponse.Status, string(r))
 	}
 
-	forms := getElementsByTagName(bodyParsed, "form")
-	if len(forms) != 1 {
-		errMsg := "expected a single OpenShift form"
-		if len(expectedErr) != 0 {
-			// Return the expected error if it's found amongst the text elements
-			textNodes := getTextNodes(bodyParsed)
-			for i := range textNodes {
-				if textNodes[i].Data == expectedErr {
-					errMsg = expectedErr
-				}
-			}
-		}
-		return nil, fmt.Errorf(errMsg)
-
-	}
-
-	formReq, err := newRequestFromForm(forms[0], response.Request.URL, user, password)
+	loginPageContent, err := io.ReadAll(authorizeResponse.Body)
 	if err != nil {
-		return nil, err
+		return fmt.Errorf("OAuth flow failed to read login page: %v", err)
 	}
-
-	postResp, err := client.Do(formReq)
+	loginPageParsed, err := html.Parse(strings.NewReader(string(loginPageContent)))
 	if err != nil {
-		return nil, err
+		return fmt.Errorf("OAuth flow failed to parse login page: %v", err)
 	}
-
-	return postResp, nil
-}
-
-func confirmOAuthFlow(client *http.Client, requestURL, user, password, expectedErr string, expectBypass bool) error {
-	resp, err := client.Get(requestURL)
+	loginTitle := getElementsByTagName(loginPageParsed, "title")
+	actualTitle := getPageTitle(loginTitle)
+	if len(loginTitle) == 0 || !strings.Contains(actualTitle, "Log in") {
+		return fmt.Errorf("OAuth flow expected login page but got title: %q",
+			actualTitle)
+	}
+	loginForm := getElementsByTagName(loginPageParsed, "form")
+	if len(loginForm) != 1 {
+		return fmt.Errorf("OAuth flow expected single login form, got %d forms",
+			len(loginForm))
+	}
+	loginFormRequest, err := newRequestFromForm(loginForm[0],
+		authorizeResponse.Request.URL, user, password)
 	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		r, _ := ioutil.ReadAll(resp.Body)
-		return fmt.Errorf("expected to be redirected to the oauth-server login page, got %q; page content\n%s", resp.Status, r)
+		return fmt.Errorf("OAuth flow failed to create login request: %v", err)
 	}
 
-	// OpenShift login page
-	loginResp, err := submitOAuthForm(client, resp, user, password, expectedErr)
+	loginRequestContent, err := io.ReadAll(loginFormRequest.Body)
 	if err != nil {
-		return err
+		return fmt.Errorf("OAuth flow failed to read login request body: %v", err)
+	}
+	loginFormRequest.Body = io.NopCloser(bytes.NewReader(loginRequestContent))
+
+	loginResp, err := client.Do(loginFormRequest)
+	if err != nil {
+		return fmt.Errorf("OAuth flow failed to submit login form: %v", err)
 	}
 	defer loginResp.Body.Close()
-	if resp.StatusCode != 200 {
-		r, _ := ioutil.ReadAll(loginResp.Body)
-		return fmt.Errorf("failed to submit the login form: %q\n page content\n%s", resp.Status, r)
+	if loginResp.StatusCode != 200 {
+		r, _ := io.ReadAll(loginResp.Body)
+		return fmt.Errorf("OAuth login form returned status %s: %s",
+			loginResp.Status, string(r))
+	}
+	loginRespContent, err := io.ReadAll(loginResp.Body)
+	if err != nil {
+		return fmt.Errorf("OAuth flow failed to read login response: %v", err)
+	}
+	loginRespParsed, err := html.Parse(strings.NewReader(string(loginRespContent)))
+	if err != nil {
+		return fmt.Errorf("OAuth flow failed to parse login response: %v", err)
 	}
 
-	// authorization grant form; no password should be expected
-	grantResp, err := submitOAuthForm(client, loginResp, user, "", expectedErr)
+	loginRespTitle := getElementsByTagName(loginRespParsed, "title")
+	actualAuthTitle := getPageTitle(loginRespTitle)
+	if len(loginRespTitle) == 0 ||
+		!strings.Contains(actualAuthTitle, "Authorize") {
+		return fmt.Errorf("OAuth flow expected authorization page but got title: %q",
+			actualAuthTitle)
+	}
+
+	grantForm := getElementsByTagName(loginRespParsed, "form")
+	if len(grantForm) != 1 {
+		return fmt.Errorf("OAuth flow expected single authorization form, got %d forms",
+			len(grantForm))
+	}
+	grantFormRequest, err := newRequestFromForm(grantForm[0],
+		loginResp.Request.URL, user, password)
 	if err != nil {
-		return err
+		return fmt.Errorf("OAuth flow failed to create authorization request: %v",
+			err)
+	}
+	grantFormRequestContent, err := io.ReadAll(grantFormRequest.Body)
+	if err != nil {
+		return fmt.Errorf("OAuth flow failed to read authorization request body: %v",
+			err)
+	}
+
+	grantFormRequest.Body = io.NopCloser(bytes.NewReader(grantFormRequestContent))
+
+	grantResp, err := client.Do(grantFormRequest)
+	if err != nil {
+		return fmt.Errorf("OAuth flow failed to submit authorization form: %v", err)
 	}
 	defer grantResp.Body.Close()
-	if resp.StatusCode != 200 {
-		r, _ := ioutil.ReadAll(grantResp.Body)
-		return fmt.Errorf("failed to submit the grant form: %q\n pageC content\n%s", resp.Status, r)
+	if grantResp.StatusCode != 200 {
+		r, _ := io.ReadAll(grantResp.Body)
+		return fmt.Errorf("OAuth authorization form returned status %s: %s",
+			grantResp.Status, string(r))
 	}
 
 	return nil
