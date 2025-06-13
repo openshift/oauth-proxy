@@ -19,6 +19,8 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/crypto/bcrypt"
+
 	"github.com/stretchr/testify/require"
 	"golang.org/x/net/html"
 
@@ -40,7 +42,6 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 	routev1 "github.com/openshift/api/route/v1"
 	configv1client "github.com/openshift/client-go/config/clientset/versioned/typed/config/v1"
-	projectclient "github.com/openshift/client-go/project/clientset/versioned"
 	routev1client "github.com/openshift/client-go/route/clientset/versioned/typed/route/v1"
 	userclients "github.com/openshift/client-go/user/clientset/versioned"
 	"github.com/openshift/library-go/pkg/config/clusteroperator/v1helpers"
@@ -54,11 +55,11 @@ const (
 	defaultTimeout = 30 * time.Second
 )
 
-func CreateTestProject(t *testing.T, kubeClient kubernetes.Interface, projectClient *projectclient.Clientset) string {
+func CreateTestProjectWithCancel(t *testing.T, kubeClient kubernetes.Interface) (string, func()) {
 	newNamespace := names.SimpleNameGenerator.GenerateName("e2e-oauth-proxy-")
 
-	// e2e.Logf("Creating project %q", newNamespace)
-	_, err := kubeClient.CoreV1().Namespaces().Create(context.Background(),
+	ns, err := kubeClient.CoreV1().Namespaces().Create(
+		context.Background(),
 		&corev1.Namespace{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: newNamespace,
@@ -66,7 +67,9 @@ func CreateTestProject(t *testing.T, kubeClient kubernetes.Interface, projectCli
 					"test": "oauth-proxy",
 				},
 			},
-		}, metav1.CreateOptions{})
+		},
+		metav1.CreateOptions{},
+	)
 	require.NoError(t, err)
 
 	err = waitForSelfSAR(1*time.Second, 60*time.Second, kubeClient, authorizationv1.SelfSubjectAccessReviewSpec{
@@ -79,7 +82,14 @@ func CreateTestProject(t *testing.T, kubeClient kubernetes.Interface, projectCli
 	})
 	require.NoError(t, err)
 
-	return newNamespace
+	return newNamespace, func() {
+		err = kubeClient.CoreV1().Namespaces().Delete(
+			context.Background(), ns.Name, metav1.DeleteOptions{},
+		)
+		if err != nil {
+			t.Errorf("Error deleting test namespace %s: %v", ns.Name, err)
+		}
+	}
 }
 
 func waitForSelfSAR(interval, timeout time.Duration, c kubernetes.Interface, selfSAR authorizationv1.SelfSubjectAccessReviewSpec) error {
@@ -111,11 +121,8 @@ func waitForPodRunningInNamespace(c kubernetes.Interface, pod *corev1.Pod) error
 	if pod.Status.Phase == corev1.PodRunning {
 		return nil
 	}
-	return waitTimeoutForPodRunningInNamespace(c, pod.Name, pod.Namespace, defaultTimeout)
-}
+	return wait.PollImmediate(Poll, defaultTimeout, podRunning(c, pod.Name, pod.Namespace))
 
-func waitTimeoutForPodRunningInNamespace(c kubernetes.Interface, podName, namespace string, timeout time.Duration) error {
-	return wait.PollImmediate(Poll, defaultTimeout, podRunning(c, podName, namespace))
 }
 
 func waitForPodDeletion(c kubernetes.Interface, podName, namespace string) error {
@@ -439,6 +446,24 @@ func newRequestFromForm(form *html.Node, currentURL *url.URL, user, password str
 }
 
 // Varying the login name for each test ensures we test a fresh grant
+func generateHTPasswdData(users []string) []byte {
+	// Generate bcrypt hash of 'password'
+	passwordBytes, err := bcrypt.GenerateFromPassword([]byte("password"), bcrypt.DefaultCost)
+	if err != nil {
+		panic(fmt.Sprintf("failed to generate bcrypt hash: %v", err))
+	}
+	passwordHash := string(passwordBytes)
+
+	var lines []string
+	for _, user := range users {
+		lines = append(lines, user+":"+passwordHash)
+	}
+
+	htpasswdContent := strings.Join(lines, "\n") + "\n"
+
+	return []byte(htpasswdContent)
+}
+
 func createTestIdP(
 	t *testing.T,
 	kubeClient *kubernetes.Clientset,
@@ -447,50 +472,57 @@ func createTestIdP(
 	nsName string,
 	numUsers int,
 ) ([]string, func()) {
-	oauthConfig, err := oauthClient.Get(context.TODO(), "cluster", metav1.GetOptions{})
+	ctx := context.Background()
+	oauthConfig, err := oauthClient.Get(ctx, "cluster", metav1.GetOptions{})
 	require.NoError(t, err)
 
 	var users []string
 	for i := 0; i < numUsers; i++ {
-		users = append(users, fmt.Sprintf("testuser%d", i))
+		users = append(users, fmt.Sprintf("testuser-%d", i))
 	}
 
-	htpasswdSecretName := nsName + "htpasswd"
-	kubeClient.CoreV1().Secrets("openshift-config").Create(context.TODO(),
+	secret, err := kubeClient.CoreV1().Secrets("openshift-config").Create(
+		ctx,
 		&corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{
-				Name: htpasswdSecretName,
+				Name: nsName + "htpasswd",
 			},
 			Data: map[string][]byte{
-				"htpasswd": []byte(strings.Join(users, ":$2y$05$0Fk2s.0FbLy0FZ82JAqajOV/kbT/wqKX5/QFKgps6J69J2jY6r5ZG\n")), // bcrypt of 'password'
+				"htpasswd": generateHTPasswdData(users), // bcrypt of 'password'
 			},
 		},
 		metav1.CreateOptions{},
 	)
+	if err != nil {
+		t.Errorf("failed to create secret: %v", err)
+	}
 
-	oauthConfig.Spec.IdentityProviders = append(
-		oauthConfig.Spec.IdentityProviders, configv1.IdentityProvider{
+	oauthConfig.Spec.IdentityProviders = []configv1.IdentityProvider{
+		{
 			Name: nsName,
 			IdentityProviderConfig: configv1.IdentityProviderConfig{
 				Type: "HTPasswd",
 				HTPasswd: &configv1.HTPasswdIdentityProvider{
 					FileData: configv1.SecretNameReference{
-						Name: htpasswdSecretName,
+						Name: secret.Name,
 					},
 				},
 			},
 		},
-	)
+	}
 
-	_, err = oauthClient.Update(context.TODO(), oauthConfig, metav1.UpdateOptions{})
+	_, err = oauthClient.Update(ctx, oauthConfig, metav1.UpdateOptions{})
 	require.NoError(t, err)
 
 	cleanup := func() {
-		err := kubeClient.CoreV1().Secrets("openshift-config").Delete(context.TODO(), nsName+"htpasswd", metav1.DeleteOptions{})
+		t.Log("Cleaning up test IdP")
+		err := kubeClient.CoreV1().Secrets("openshift-config").Delete(
+			ctx, nsName+"htpasswd", metav1.DeleteOptions{},
+		)
 		if err != nil {
 			t.Logf("failed to delete secret openshift-config/%shtpasswd: %v", nsName, err)
 		}
-		oauthConfig, err := oauthClient.Get(context.TODO(), "cluster", metav1.GetOptions{})
+		oauthConfig, err := oauthClient.Get(ctx, "cluster", metav1.GetOptions{})
 		if err != nil {
 			t.Logf("failed to get the oauth/cluster config during cleanup: %v", err)
 		}
@@ -500,22 +532,27 @@ func createTestIdP(
 				break
 			}
 		}
-		_, err = oauthClient.Update(context.TODO(), oauthConfig, metav1.UpdateOptions{})
+		_, err = oauthClient.Update(ctx, oauthConfig, metav1.UpdateOptions{})
 		if err != nil {
 			t.Logf("failed to remove the test IdP from oauth/cluster: %s", err)
 		}
 
 		for i := 0; i < numUsers; i++ {
-			username := fmt.Sprintf("testuser%d", i)
+			username := fmt.Sprintf("testuser-%d", i)
 			identityName := fmt.Sprintf("%s:%s", nsName, username)
-			if err := userClientSet.UserV1().Users().Delete(context.TODO(), username, metav1.DeleteOptions{}); err != nil && !errors.IsNotFound(err) {
+			if err := userClientSet.UserV1().Users().Delete(
+				ctx, username, metav1.DeleteOptions{},
+			); err != nil && !errors.IsNotFound(err) {
 				t.Logf("failed to remove user: %s", username)
 			}
-			if err := userClientSet.UserV1().Identities().Delete(context.TODO(), identityName, metav1.DeleteOptions{}); err != nil && !errors.IsNotFound(err) {
+			if err := userClientSet.UserV1().Identities().Delete(
+				ctx, identityName, metav1.DeleteOptions{},
+			); err != nil && !errors.IsNotFound(err) {
 				t.Logf("failed to remove identity: %s", identityName)
 			}
 		}
 	}
+
 	return users, cleanup
 }
 
@@ -775,7 +812,13 @@ func newOAuthProxyRoleBinding(user, namespace string) *rbacv1.RoleBinding {
 // NewClientConfigForTest returns a config configured to connect to the api server
 func NewClientConfigForTest(t *testing.T) *rest.Config {
 	loader := clientcmd.NewDefaultClientConfigLoadingRules()
-	clientConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loader, &clientcmd.ConfigOverrides{ClusterInfo: cmdapi.Cluster{InsecureSkipTLSVerify: true}})
+	clientConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
+		loader,
+		&clientcmd.ConfigOverrides{
+			ClusterInfo: cmdapi.Cluster{InsecureSkipTLSVerify: true},
+		},
+	)
+
 	config, err := clientConfig.ClientConfig()
 	if err == nil {
 		t.Logf("Found configuration for host %v.\n", config.Host)
@@ -786,9 +829,10 @@ func NewClientConfigForTest(t *testing.T) *rest.Config {
 }
 
 func WaitForClusterOperatorStatus(t *testing.T, client configv1client.ConfigV1Interface, available, progressing, degraded *bool) error {
+	ctx := context.Background()
 	status := map[configv1.ClusterStatusConditionType]bool{} // struct for easy printing the conditions
 	return wait.PollImmediate(time.Second, 10*time.Minute, func() (bool, error) {
-		clusterOperator, err := client.ClusterOperators().Get(context.TODO(), "authentication", metav1.GetOptions{})
+		clusterOperator, err := client.ClusterOperators().Get(ctx, "authentication", metav1.GetOptions{})
 		if errors.IsNotFound(err) {
 			t.Logf("clusteroperators.config.openshift.io/authentication: %v", err)
 			return false, nil
