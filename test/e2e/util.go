@@ -59,7 +59,7 @@ func CreateTestProjectWithCancel(t *testing.T, kubeClient kubernetes.Interface) 
 	newNamespace := names.SimpleNameGenerator.GenerateName("e2e-oauth-proxy-")
 
 	ns, err := kubeClient.CoreV1().Namespaces().Create(
-		t.Context(),
+		context.Background(),
 		&corev1.Namespace{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: newNamespace,
@@ -84,7 +84,7 @@ func CreateTestProjectWithCancel(t *testing.T, kubeClient kubernetes.Interface) 
 
 	return newNamespace, func() {
 		err = kubeClient.CoreV1().Namespaces().Delete(
-			t.Context(), ns.Name, metav1.DeleteOptions{},
+			context.Background(), ns.Name, metav1.DeleteOptions{},
 		)
 		if err != nil {
 			t.Errorf("Error deleting test namespace %s: %v", ns.Name, err)
@@ -472,7 +472,7 @@ func createTestIdP(
 	nsName string,
 	numUsers int,
 ) ([]string, func()) {
-	ctx := t.Context()
+	ctx := context.Background()
 	oauthConfig, err := oauthClient.Get(ctx, "cluster", metav1.GetOptions{})
 	require.NoError(t, err)
 
@@ -562,12 +562,12 @@ func deleteProvider(provider []configv1.IdentityProvider, idx int) []configv1.Id
 }
 
 func deleteTestRoute(t *testing.T, routeClient routev1client.RouteInterface, routeName string) error {
-	ctx := t.Context()
+	ctx := context.Background()
 	return routeClient.Delete(ctx, routeName, metav1.DeleteOptions{})
 }
 
 func getRouteHost(t *testing.T, routeClient routev1client.RouteInterface, routeName string) (string, error) {
-	ctx := t.Context()
+	ctx := context.Background()
 	route, err := routeClient.Get(ctx, routeName, metav1.GetOptions{})
 	if err != nil {
 		return "", err
@@ -604,7 +604,7 @@ func newOAuthProxyService(suffix string) *corev1.Service {
 
 // create a route using oc create directly
 func createOAuthProxyRoute(t *testing.T, routeClient routev1client.RouteInterface, suffix string) string {
-	ctx := t.Context()
+	ctx := context.Background()
 	routeName := "proxy-route"
 	serviceName := "proxy"
 	appLabel := "proxy"
@@ -829,7 +829,7 @@ func NewClientConfigForTest(t *testing.T) *rest.Config {
 }
 
 func WaitForClusterOperatorStatus(t *testing.T, client configv1client.ConfigV1Interface, available, progressing, degraded *bool) error {
-	ctx := t.Context()
+	ctx := context.Background()
 	status := map[configv1.ClusterStatusConditionType]bool{} // struct for easy printing the conditions
 	return wait.PollImmediate(time.Second, 10*time.Minute, func() (bool, error) {
 		clusterOperator, err := client.ClusterOperators().Get(ctx, "authentication", metav1.GetOptions{})

@@ -226,7 +226,7 @@ func TestOAuthProxyE2E(t *testing.T) {
 
 	for i, tc := range testCases {
 		t.Run(fmt.Sprintf("setting up e2e tests %s", tc.name), func(t *testing.T) {
-			ctx := t.Context()
+			ctx := context.Background()
 			user := users[i]
 			t.Logf("Using test user: %s", user)
 
