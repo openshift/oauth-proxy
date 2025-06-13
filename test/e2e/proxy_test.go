@@ -28,11 +28,12 @@ import (
 )
 
 func TestOAuthProxyE2E(t *testing.T) {
+	ctx := context.Background()
 	testConfig := NewClientConfigForTest(t)
 	kubeClient, err := kubernetes.NewForConfig(testConfig)
 	require.NoError(t, err)
 
-	ns, cancel := CreateTestProjectWithCancel(t, kubeClient)
+	ns, cancel := CreateTestProjectWithCancel(ctx, t, kubeClient)
 	defer cancel()
 
 	registry := strings.Split(os.Getenv("RELEASE_IMAGE_LATEST"), "/")[0]
@@ -44,7 +45,7 @@ func TestOAuthProxyE2E(t *testing.T) {
 
 	t.Log("Removing kubeadmin user if exists")
 	kubeadminSecret, err := kubeClient.CoreV1().Secrets("kube-system").
-		Get(context.TODO(), "kubeadmin", metav1.GetOptions{})
+		Get(ctx, "kubeadmin", metav1.GetOptions{})
 	var kubeadminExisted bool
 	if err != nil && !errors.IsNotFound(err) {
 		t.Fatalf("couldn't check for kubeadmin user: %v", err)
@@ -55,7 +56,7 @@ func TestOAuthProxyE2E(t *testing.T) {
 	}
 
 	err = kubeClient.CoreV1().Secrets("kube-system").
-		Delete(context.TODO(), "kubeadmin", metav1.DeleteOptions{})
+		Delete(ctx, "kubeadmin", metav1.DeleteOptions{})
 	if err != nil && !errors.IsNotFound(err) {
 		t.Fatalf("couldn't remove the kubeadmin user: %v", err)
 	}
@@ -66,7 +67,7 @@ func TestOAuthProxyE2E(t *testing.T) {
 			kubeadminSecret.ResourceVersion = ""
 			kubeadminSecret.UID = ""
 			_, err := kubeClient.CoreV1().Secrets("kube-system").
-				Create(context.TODO(), kubeadminSecret, metav1.CreateOptions{})
+				Create(ctx, kubeadminSecret, metav1.CreateOptions{})
 			if err != nil {
 				t.Errorf("Failed to restore kubeadmin user: %v", err)
 			}
@@ -199,18 +200,25 @@ func TestOAuthProxyE2E(t *testing.T) {
 		},
 	}
 
-	users, idpCleanup := createTestIdP(t, kubeClient,
-		configClient.ConfigV1().OAuths(), userClient, ns, len(testCases))
+	users, idpCleanup := createTestIdP(
+		ctx, t,
+		kubeClient, configClient.ConfigV1().OAuths(), userClient,
+		ns, len(testCases),
+	)
 	t.Logf("Created test IdP with %d users", len(users))
 	defer idpCleanup()
 
 	// wait for the IdP to be honored in the oauth-server
 	t.Log("Waiting for IdP to be honored in oauth-server")
-	err = WaitForClusterOperatorStatus(t, configClient.ConfigV1(), nil,
-		pbool(true), nil)
+	err = WaitForClusterOperatorStatus(
+		ctx, t,
+		configClient.ConfigV1(), nil, pbool(true), nil,
+	)
 	require.NoError(t, err, "Error waiting for oauth-server operator to be ready")
-	err = WaitForClusterOperatorStatus(t, configClient.ConfigV1(),
-		pbool(true), pbool(false), nil)
+	err = WaitForClusterOperatorStatus(
+		ctx, t,
+		configClient.ConfigV1(), pbool(true), pbool(false), nil,
+	)
 	require.NoError(t, err, "Error waiting for oauth-server operator to be ready")
 
 	routeClient, err := routeclient.NewForConfig(testConfig)
@@ -226,7 +234,6 @@ func TestOAuthProxyE2E(t *testing.T) {
 
 	for i, tc := range testCases {
 		t.Run(fmt.Sprintf("setting up e2e tests %s", tc.name), func(t *testing.T) {
-			ctx := context.Background()
 			user := users[i]
 			t.Logf("Using test user: %s", user)
 
@@ -241,8 +248,10 @@ func TestOAuthProxyE2E(t *testing.T) {
 					Delete(ctx, sa.Name, metav1.DeleteOptions{})
 			}()
 
-			proxyRouteHost := createOAuthProxyRoute(t,
-				routeClient.RouteV1().Routes(ns), tc.name)
+			proxyRouteHost := createOAuthProxyRoute(
+				ctx, t,
+				routeClient.RouteV1().Routes(ns), tc.name,
+			)
 			defer func() {
 				_ = deleteTestRoute(t, routeClient.RouteV1().Routes(ns), fmt.Sprintf("proxy-route-%s", tc.name))
 			}()
@@ -292,10 +301,10 @@ func TestOAuthProxyE2E(t *testing.T) {
 			defer func() {
 				_ = kubeClient.CoreV1().Pods(ns).
 					Delete(ctx, oauthProxyPod.Name, metav1.DeleteOptions{})
-				_ = waitForPodDeletion(kubeClient, oauthProxyPod.Name, ns)
+				_ = waitForPodDeletion(ctx, kubeClient, oauthProxyPod.Name, ns)
 			}()
 
-			err = waitForPodRunningInNamespace(kubeClient, oauthProxyPod)
+			err = waitForPodRunningInNamespace(ctx, kubeClient, oauthProxyPod)
 			if err != nil {
 				t.Fatalf("setup: error waiting for pod to run: %s", err)
 			}
