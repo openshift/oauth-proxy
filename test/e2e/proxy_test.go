@@ -240,7 +240,7 @@ func TestOAuthProxyE2E(t *testing.T) {
 			proxyRouteHost := createOAuthProxyRoute(t,
 				routeClient.RouteV1().Routes(ns), tc.name)
 			defer func() {
-				_ = deleteTestRoute(fmt.Sprintf("proxy-route-%s", tc.name), ns)
+				_ = deleteTestRoute(t, routeClient.RouteV1().Routes(ns), fmt.Sprintf("proxy-route-%s", tc.name))
 			}()
 
 			caPem, serviceCert, serviceKey, err := createCAandCertSet(proxyRouteHost)

@@ -15,7 +15,6 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
-	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -461,7 +460,6 @@ func generateHTPasswdData(users []string) []byte {
 	}
 
 	htpasswdContent := strings.Join(lines, "\n") + "\n"
-	fmt.Printf("DEBUG: Generated htpasswd content:\n%s", htpasswdContent)
 
 	return []byte(htpasswdContent)
 }
@@ -540,7 +538,7 @@ func createTestIdP(
 		}
 
 		for i := 0; i < numUsers; i++ {
-			username := fmt.Sprintf("testuser%d", i)
+			username := fmt.Sprintf("testuser-%d", i)
 			identityName := fmt.Sprintf("%s:%s", nsName, username)
 			if err := userClientSet.UserV1().Users().Delete(
 				ctx, username, metav1.DeleteOptions{},
@@ -563,43 +561,18 @@ func deleteProvider(provider []configv1.IdentityProvider, idx int) []configv1.Id
 	return provider[:len(provider)-1]
 }
 
-// execCmd executes a command and returns the stdout + error, if any
-func execCmd(cmd string, args []string, input string) (string, error) {
-	c := exec.Command(cmd, args...)
-	stdin, err := c.StdinPipe()
-	if err != nil {
-		return "", err
-	}
-
-	go func() {
-		defer stdin.Close()
-		if input != "" {
-			io.WriteString(stdin, input)
-		}
-	}()
-
-	out, err := c.CombinedOutput()
-	if err != nil {
-		return "", err
-	}
-	return string(out), nil
+func deleteTestRoute(t *testing.T, routeClient routev1client.RouteInterface, routeName string) error {
+	ctx := t.Context()
+	return routeClient.Delete(ctx, routeName, metav1.DeleteOptions{})
 }
 
-func deleteTestRoute(routeName, namespace string) error {
-	_, err := execCmd("oc", []string{"delete", fmt.Sprintf("route/%s", routeName), "-n", namespace}, "")
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func getRouteHost(routeName, namespace string) (string, error) {
-	out, err := execCmd("oc", []string{"get", fmt.Sprintf("route/%s", routeName), "-o", "jsonpath='{.spec.host}'", "-n", namespace}, "")
+func getRouteHost(t *testing.T, routeClient routev1client.RouteInterface, routeName string) (string, error) {
+	ctx := t.Context()
+	route, err := routeClient.Get(ctx, routeName, metav1.GetOptions{})
 	if err != nil {
 		return "", err
 	}
-	// strip surrounding single quotes
-	return out[1 : len(out)-1], nil
+	return route.Spec.Host, nil
 }
 
 func newOAuthProxyService(suffix string) *corev1.Service {
