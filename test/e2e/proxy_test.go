@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/cookiejar"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -34,8 +35,11 @@ func TestOAuthProxyE2E(t *testing.T) {
 	ns, cancel := CreateTestProjectWithCancel(t, kubeClient)
 	defer cancel()
 
-	// TODO@ibihim: replace with proper image after fixing
-	image := "quay.io/kostrows/oauth-proxy:latest"
+	registry := strings.Split(os.Getenv("RELEASE_IMAGE_LATEST"), "/")[0]
+	require.NotEmpty(t, registry, "Registry is empty. Check RELEASE_IMAGE_LATEST environment variable.")
+	namespace := os.Getenv("NAMESPACE")
+	require.NotEmpty(t, namespace, "Namespace is empty. Check NAMESPACE environment variable.")
+	image := registry + "/" + namespace + "/pipeline:oauth-proxy"
 	t.Logf("Using custom debug image: %s", image)
 
 	t.Log("Removing kubeadmin user if exists")
@@ -335,7 +339,7 @@ func TestOAuthProxyE2E(t *testing.T) {
 				if len(tc.expectedErr) > 0 {
 					if strings.Contains(err.Error(), tc.expectedErr) {
 						t.Logf("Got expected error containing '%s': %s",
-						tc.expectedErr, err.Error())
+							tc.expectedErr, err.Error())
 					} else {
 						t.Errorf("expected error containing '%s', got '%s'", tc.expectedErr, err)
 					}
