@@ -565,17 +565,21 @@ func getRouteHost(routeName, namespace string) (string, error) {
 	return out[1 : len(out)-1], nil
 }
 
-func newOAuthProxyService() *corev1.Service {
+func newOAuthProxyService(suffix string) *corev1.Service {
+	name := "proxy"
+	if len(suffix) > 0 {
+		name = fmt.Sprintf("proxy-%s", suffix)
+	}
 	return &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: "proxy",
+			Name: name,
 			Labels: map[string]string{
-				"app": "proxy",
+				"app": name,
 			},
 		},
 		Spec: corev1.ServiceSpec{
 			Selector: map[string]string{
-				"app": "proxy",
+				"app": name,
 			},
 			Ports: []corev1.ServicePort{
 				{
@@ -589,14 +593,23 @@ func newOAuthProxyService() *corev1.Service {
 }
 
 // create a route using oc create directly
-func createOAuthProxyRoute(t *testing.T, routeClient routev1client.RouteInterface) string {
+func createOAuthProxyRoute(t *testing.T, routeClient routev1client.RouteInterface, suffix string) string {
+	ctx := context.Background()
+	routeName := "proxy-route"
+	serviceName := "proxy"
+	appLabel := "proxy"
+	if suffix != "" {
+		routeName = fmt.Sprintf("proxy-route-%s", suffix)
+		serviceName = fmt.Sprintf("proxy-%s", suffix)
+		appLabel = fmt.Sprintf("proxy-%s", suffix)
+	}
 	route, err := routeClient.Create(
-		context.TODO(),
+		ctx,
 		&routev1.Route{
 			ObjectMeta: metav1.ObjectMeta{
-				Name: "proxy-route",
+				Name: routeName,
 				Labels: map[string]string{
-					"app": "proxy",
+					"app": appLabel,
 				},
 			},
 			Spec: routev1.RouteSpec{
@@ -605,7 +618,7 @@ func createOAuthProxyRoute(t *testing.T, routeClient routev1client.RouteInterfac
 				},
 				To: routev1.RouteTargetReference{
 					Kind:   "Service",
-					Name:   "proxy",
+					Name:   serviceName,
 					Weight: pint32(100),
 				},
 				WildcardPolicy: routev1.WildcardPolicyNone,
