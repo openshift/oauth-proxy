@@ -382,30 +382,37 @@ func newRequestFromForm(form *html.Node, currentURL *url.URL, user, password str
 	addedSubmit := false
 	for _, input := range getElementsByTagName(form, "input") {
 		if name, ok := getAttr(input, "name"); ok {
-			if value, ok := getAttr(input, "value"); ok {
-				inputType, _ := getAttr(input, "type")
+			value, hasValue := getAttr(input, "value")
+			inputType, _ := getAttr(input, "type")
 
-				switch inputType {
-				case "text":
-					if name == "username" {
-						formData.Add(name, user)
-					}
-				case "password":
-					if name == "password" {
-						formData.Add(name, password)
-					}
-				case "submit":
-					// If this is a submit input, only add the value of the first one.
-					// We're simulating submitting the form.
-					if !addedSubmit {
-						formData.Add(name, value)
-						addedSubmit = true
-					}
-				case "radio", "checkbox":
-					if _, checked := getAttr(input, "checked"); checked {
-						formData.Add(name, value)
-					}
-				default:
+			switch inputType {
+			case "text":
+				if name == "username" {
+					formData.Add(name, user)
+				} else if hasValue {
+					formData.Add(name, value)
+				}
+			case "password":
+				if name == "password" {
+					formData.Add(name, password)
+				}
+			case "submit":
+				// If this is a submit input, only add the value of the first one.
+				// We're simulating submitting the form.
+				if !addedSubmit && hasValue {
+					formData.Add(name, value)
+					addedSubmit = true
+				}
+			case "radio", "checkbox":
+				if _, checked := getAttr(input, "checked"); checked && hasValue {
+					formData.Add(name, value)
+				}
+			case "hidden":
+				if hasValue {
+					formData.Add(name, value)
+				}
+			default:
+				if hasValue {
 					formData.Add(name, value)
 				}
 			}
