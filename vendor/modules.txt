@@ -182,7 +182,6 @@ github.com/munnerz/goautoneg
 ## explicit; go 1.20
 github.com/openshift/api/config/v1
 github.com/openshift/api/config/v1alpha1
-github.com/openshift/api/project/v1
 github.com/openshift/api/route/v1
 github.com/openshift/api/user/v1
 # github.com/openshift/build-machinery-go v0.0.0-20220913142420-e25cf57ea46d
@@ -204,11 +203,6 @@ github.com/openshift/client-go/config/clientset/versioned
 github.com/openshift/client-go/config/clientset/versioned/scheme
 github.com/openshift/client-go/config/clientset/versioned/typed/config/v1
 github.com/openshift/client-go/config/clientset/versioned/typed/config/v1alpha1
-github.com/openshift/client-go/project/applyconfigurations/internal
-github.com/openshift/client-go/project/applyconfigurations/project/v1
-github.com/openshift/client-go/project/clientset/versioned
-github.com/openshift/client-go/project/clientset/versioned/scheme
-github.com/openshift/client-go/project/clientset/versioned/typed/project/v1
 github.com/openshift/client-go/route/applyconfigurations/internal
 github.com/openshift/client-go/route/applyconfigurations/route/v1
 github.com/openshift/client-go/route/clientset/versioned
