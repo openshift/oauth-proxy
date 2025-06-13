@@ -49,71 +49,80 @@ func TestOAuthProxyE2E(t *testing.T) {
 		kubeClient.CoreV1().Namespaces().Delete(testCtx, ns, metav1.DeleteOptions{})
 	}()
 
-	oauthProxyTests := map[string]struct {
-		oauthProxyArgs []string
-		expectedErr    string
-		accessSubPath  string
-		pageResult     string
-		bypass         bool
+	testCases := []struct {
+		name          string
+		proxyArgs     []string
+		expectedErr   string
+		accessSubPath string
+		pageResult    string
+		bypass        bool
 	}{
-		"basic": {
-			oauthProxyArgs: []string{
+		{
+			name: "basic",
+			proxyArgs: []string{
 				"--upstream=http://localhost:8080",
 			},
 			pageResult: "URI: /",
 		},
-		// Tests a scope that is not valid for SA OAuth client use
-		"scope-full": {
-			oauthProxyArgs: []string{
+		{
+			name: "scope-full",
+			proxyArgs: []string{
 				"--upstream=http://localhost:8080",
 				"--scope=user:full",
 			},
-			expectedErr: "403 Permission Denied",
+			expectedErr: "403 Forbidden",
 		},
-		"sar-ok": {
-			oauthProxyArgs: []string{
+		{
+			name: "sar-ok",
+			proxyArgs: []string{
 				"--upstream=http://localhost:8080",
 				`--openshift-sar={"namespace":"` + ns + `","resource":"services","verb":"list"}`,
 			},
 			pageResult: "URI: /",
 		},
-		"sar-fail": {
-			oauthProxyArgs: []string{
+		{
+			name: "sar-fail",
+			proxyArgs: []string{
 				"--upstream=http://localhost:8080",
 				`--openshift-sar={"namespace":"other","resource":"services","verb":"list"}`,
 			},
-			expectedErr: "did not reach upstream site",
+			expectedErr: "403 Forbidden",
 		},
-		"sar-name-ok": {
-			oauthProxyArgs: []string{
+		{
+			name: "sar-name-ok",
+			proxyArgs: []string{
 				"--upstream=http://localhost:8080",
 				`--openshift-sar={"namespace":"` + ns + `","resource":"routes","resourceName":"proxy-route","verb":"get"}`,
 			},
 			pageResult: "URI: /",
 		},
-		"sar-name-fail": {
-			oauthProxyArgs: []string{
+		{
+			name: "sar-name-fail",
+			proxyArgs: []string{
 				"--upstream=http://localhost:8080",
 				`--openshift-sar={"namespace":"other","resource":"routes","resourceName":"proxy-route","verb":"get"}`,
 			},
-			expectedErr: "did not reach upstream site",
+			expectedErr: "403 Forbidden",
 		},
-		"sar-multi-ok": {
-			oauthProxyArgs: []string{
+		{
+			name: "sar-multi-ok",
+			proxyArgs: []string{
 				"--upstream=http://localhost:8080",
 				`--openshift-sar=[{"namespace":"` + ns + `","resource":"services","verb":"list"}, {"namespace":"` + ns + `","resource":"routes","verb":"list"}]`,
 			},
 			pageResult: "URI: /",
 		},
-		"sar-multi-fail": {
-			oauthProxyArgs: []string{
+		{
+			name: "sar-multi-fail",
+			proxyArgs: []string{
 				"--upstream=http://localhost:8080",
 				`--openshift-sar=[{"namespace":"` + ns + `","resource":"services","verb":"list"}, {"namespace":"other","resource":"pods","verb":"list"}]`,
 			},
-			expectedErr: "did not reach upstream site",
+			expectedErr: "403 Forbidden",
 		},
-		"skip-auth-regex-bypass-foo": {
-			oauthProxyArgs: []string{
+		{
+			name: "skip-auth-regex-bypass-foo",
+			proxyArgs: []string{
 				"--upstream=http://localhost:8080",
 				`--skip-auth-regex=^/foo`,
 			},
@@ -121,17 +130,18 @@ func TestOAuthProxyE2E(t *testing.T) {
 			pageResult:    "URI: /foo\n",
 			bypass:        true,
 		},
-		"skip-auth-regex-protect-bar": {
-			oauthProxyArgs: []string{
+		{
+			name: "skip-auth-regex-protect-bar",
+			proxyArgs: []string{
 				"--upstream=http://localhost:8080",
 				`--skip-auth-regex=^/foo`,
 			},
 			accessSubPath: "/bar",
 			pageResult:    "URI: /bar",
 		},
-		// test --bypass-auth-for (alias for --skip-auth-regex); expect to bypass auth for /foo
-		"bypass-auth-foo": {
-			oauthProxyArgs: []string{
+		{
+			name: "bypass-auth-foo",
+			proxyArgs: []string{
 				"--upstream=http://localhost:8080",
 				`--bypass-auth-for=^/foo`,
 			},
@@ -139,18 +149,18 @@ func TestOAuthProxyE2E(t *testing.T) {
 			pageResult:    "URI: /foo\n",
 			bypass:        true,
 		},
-		// test --bypass-auth-except-for; expect to auth /foo
-		"bypass-auth-except-try-protected": {
-			oauthProxyArgs: []string{
+		{
+			name: "bypass-auth-except-protected",
+			proxyArgs: []string{
 				"--upstream=http://localhost:8080",
 				`--bypass-auth-except-for=^/foo`,
 			},
 			accessSubPath: "/foo",
 			pageResult:    "URI: /foo\n",
 		},
-		// test --bypass-auth-except-for; expect to bypass auth for paths other than /foo
-		"bypass-auth-except-try-bypassed": {
-			oauthProxyArgs: []string{
+		{
+			name: "bypass-auth-except-bypassed",
+			proxyArgs: []string{
 				"--upstream=http://localhost:8080",
 				`--bypass-auth-except-for=^/foo`,
 			},
@@ -159,6 +169,7 @@ func TestOAuthProxyE2E(t *testing.T) {
 			bypass:        true,
 		},
 	}
+
 	registry := strings.Split(os.Getenv("RELEASE_IMAGE_LATEST"), "/")[0]
 	require.NotEmpty(t, registry, "Registry is empty. Check RELEASE_IMAGE_LATEST environment variable.")
 	namespace := os.Getenv("NAMESPACE")
@@ -171,7 +182,7 @@ func TestOAuthProxyE2E(t *testing.T) {
 		t.Fatalf("couldn't remove the kubeadmin user: %v", err)
 	}
 
-	users, idpCleanup := createTestIdP(t, kubeClient, configClient.ConfigV1().OAuths(), userClient, ns, len(oauthProxyTests))
+	users, idpCleanup := createTestIdP(t, kubeClient, configClient.ConfigV1().OAuths(), userClient, ns, len(testCases))
 	defer func() {
 		if len(os.Getenv("DEBUG_TEST")) == 0 {
 			idpCleanup()
@@ -186,13 +197,13 @@ func TestOAuthProxyE2E(t *testing.T) {
 
 	backendImage := "nginxdemos/nginx-hello:plain-text"
 	currentTestIdx := 0 // to pick the current user so that each test gets a fresh grant
-	for tcName, tc := range oauthProxyTests {
+	for _, tc := range testCases {
 		runOnly := os.Getenv("TEST")
-		if len(runOnly) > 0 && runOnly != tcName {
+		if len(runOnly) > 0 && runOnly != tc.name {
 			continue
 		}
 
-		t.Run(fmt.Sprintf("setting up e2e tests %s", tcName), func(t *testing.T) {
+		t.Run(fmt.Sprintf("setting up e2e tests %s", tc.name), func(t *testing.T) {
 			_, err := kubeClient.CoreV1().ServiceAccounts(ns).Create(testCtx, newOAuthProxySA(), metav1.CreateOptions{})
 			if err != nil {
 				t.Fatalf("setup: error creating SA: %s", err)
@@ -223,9 +234,9 @@ func TestOAuthProxyE2E(t *testing.T) {
 				t.Fatalf("setup: error creating certificate configMap: %s", err)
 			}
 
-			oauthProxyPod, err := kubeClient.CoreV1().Pods(ns).Create(testCtx, newOAuthProxyPod(image, backendImage, tc.oauthProxyArgs), metav1.CreateOptions{})
+			oauthProxyPod, err := kubeClient.CoreV1().Pods(ns).Create(testCtx, newOAuthProxyPod(image, backendImage, tc.proxyArgs), metav1.CreateOptions{})
 			if err != nil {
-				t.Fatalf("setup: error creating oauth-proxy pod with image '%s' and args '%v': %s", image, tc.oauthProxyArgs, err)
+				t.Fatalf("setup: error creating oauth-proxy pod with image '%s' and args '%v': %s", image, tc.proxyArgs, err)
 			}
 
 			err = waitForPodRunningInNamespace(kubeClient, oauthProxyPod)
@@ -252,10 +263,10 @@ func TestOAuthProxyE2E(t *testing.T) {
 			t.Logf("%s", out)
 
 			defer func() {
-				if os.Getenv("DEBUG_TEST") == tcName {
-					t.Fatalf("skipping cleanup step for test '%s' and stopping on command", tcName)
+				if os.Getenv("DEBUG_TEST") == tc.name {
+					t.Fatalf("skipping cleanup step for test '%s' and stopping on command", tc.name)
 				}
-				t.Logf("cleaning up test %s", tcName)
+				t.Logf("cleaning up test %s", tc.name)
 				kubeClient.CoreV1().Pods(ns).Delete(testCtx, "proxy", metav1.DeleteOptions{})
 				kubeClient.CoreV1().Services(ns).Delete(testCtx, "proxy", metav1.DeleteOptions{})
 				deleteTestRoute("proxy-route", ns)
