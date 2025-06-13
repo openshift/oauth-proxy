@@ -204,12 +204,12 @@ func TestOAuthProxyE2E(t *testing.T) {
 		}
 
 		t.Run(fmt.Sprintf("setting up e2e tests %s", tc.name), func(t *testing.T) {
-			_, err := kubeClient.CoreV1().ServiceAccounts(ns).Create(testCtx, newOAuthProxySA(), metav1.CreateOptions{})
+			_, err := kubeClient.CoreV1().ServiceAccounts(ns).Create(testCtx, newOAuthProxySA(tc.name), metav1.CreateOptions{})
 			if err != nil {
 				t.Fatalf("setup: error creating SA: %s", err)
 			}
 
-			proxyRouteHost := createOAuthProxyRoute(t, routeClient.RouteV1().Routes(ns))
+			proxyRouteHost := createOAuthProxyRoute(t, routeClient.RouteV1().Routes(ns), tc.name)
 
 			// Create the TLS certificate set for the client and service (with the route hostname attributes)
 			caPem, serviceCert, serviceKey, err := createCAandCertSet(proxyRouteHost)
@@ -223,18 +223,18 @@ func TestOAuthProxyE2E(t *testing.T) {
 				t.Fatalf("setup: error creating upstream TLS certs: %s", err)
 			}
 
-			_, err = kubeClient.CoreV1().Services(ns).Create(testCtx, newOAuthProxyService(), metav1.CreateOptions{})
+			_, err = kubeClient.CoreV1().Services(ns).Create(testCtx, newOAuthProxyService(tc.name), metav1.CreateOptions{})
 			if err != nil {
 				t.Fatalf("setup: error creating service: %s", err)
 			}
 
 			// configMap provides oauth-proxy with the certificates we created above
-			_, err = kubeClient.CoreV1().ConfigMaps(ns).Create(testCtx, newOAuthProxyConfigMap(ns, caPem, serviceCert, serviceKey, upstreamCA, upstreamCert, upstreamKey), metav1.CreateOptions{})
+			_, err = kubeClient.CoreV1().ConfigMaps(ns).Create(testCtx, newOAuthProxyConfigMap(ns, tc.name, caPem, serviceCert, serviceKey, upstreamCA, upstreamCert, upstreamKey), metav1.CreateOptions{})
 			if err != nil {
 				t.Fatalf("setup: error creating certificate configMap: %s", err)
 			}
 
-			oauthProxyPod, err := kubeClient.CoreV1().Pods(ns).Create(testCtx, newOAuthProxyPod(image, backendImage, tc.proxyArgs), metav1.CreateOptions{})
+			oauthProxyPod, err := kubeClient.CoreV1().Pods(ns).Create(testCtx, newOAuthProxyPod(image, backendImage, tc.name, tc.proxyArgs), metav1.CreateOptions{})
 			if err != nil {
 				t.Fatalf("setup: error creating oauth-proxy pod with image '%s' and args '%v': %s", image, tc.proxyArgs, err)
 			}
