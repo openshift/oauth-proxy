@@ -15,7 +15,6 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
-	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -26,6 +25,7 @@ import (
 	authorizationv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -524,45 +524,18 @@ func deleteProvider(provider []configv1.IdentityProvider, idx int) []configv1.Id
 	return provider[:len(provider)-1]
 }
 
-// execCmd executes a command and returns the stdout + error, if any
-func execCmd(cmd string, args []string, input string) (string, error) {
-	c := exec.Command(cmd, args...)
-	stdin, err := c.StdinPipe()
-	if err != nil {
-		return "", err
-	}
-
-	go func() {
-		defer stdin.Close()
-		if input != "" {
-			io.WriteString(stdin, input)
-		}
-	}()
-
-	out, err := c.CombinedOutput()
-	if err != nil {
-		fmt.Printf("Command '%s' failed with: %s\n", cmd, err)
-		fmt.Printf("Output: %s\n", out)
-		return "", err
-	}
-	return string(out), nil
+func deleteTestRoute(t *testing.T, routeClient routev1client.RouteInterface, routeName string) error {
+	ctx := context.Background()
+	return routeClient.Delete(ctx, routeName, metav1.DeleteOptions{})
 }
 
-func deleteTestRoute(routeName, namespace string) error {
-	_, err := execCmd("oc", []string{"delete", fmt.Sprintf("route/%s", routeName), "-n", namespace}, "")
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func getRouteHost(routeName, namespace string) (string, error) {
-	out, err := execCmd("oc", []string{"get", fmt.Sprintf("route/%s", routeName), "-o", "jsonpath='{.spec.host}'", "-n", namespace}, "")
+func getRouteHost(t *testing.T, routeClient routev1client.RouteInterface, routeName string) (string, error) {
+	ctx := context.Background()
+	route, err := routeClient.Get(ctx, routeName, metav1.GetOptions{})
 	if err != nil {
 		return "", err
 	}
-	// strip surrounding single quotes
-	return out[1 : len(out)-1], nil
+	return route.Spec.Host, nil
 }
 
 func newOAuthProxyService(suffix string) *corev1.Service {
@@ -776,6 +749,25 @@ func newOAuthProxyPod(proxyImage, backendImage string, suffix string, extraProxy
 					Env: backendEnvVars,
 				},
 			},
+		},
+	}
+}
+
+func newOAuthProxyRoleBinding(user, namespace string) *rbacv1.RoleBinding {
+	return &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "sar-" + user,
+			Namespace: namespace,
+		},
+		Subjects: []rbacv1.Subject{{
+			Kind:     "User",
+			Name:     user,
+			APIGroup: "rbac.authorization.k8s.io",
+		}},
+		RoleRef: rbacv1.RoleRef{
+			Kind:     "ClusterRole",
+			Name:     "admin",
+			APIGroup: "rbac.authorization.k8s.io",
 		},
 	}
 }
