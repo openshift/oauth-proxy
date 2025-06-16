@@ -64,7 +64,7 @@ func main() {
 	flagSet.String("client-secret", "", "the OAuth Client Secret")
 	flagSet.String("client-secret-file", "", "a file containing the client-secret")
 	flagSet.String("authenticated-emails-file", "", "authenticate against emails via file (one per line)")
-	flagSet.String("htpasswd-file", "", "additionally authenticate against a htpasswd file. Entries must be created with \"htpasswd -s\" for SHA password hashes or \"htpasswd -B\" for bcrypt hashes")
+	flagSet.String("htpasswd-file", "", "additionally authenticate against a htpasswd file. Entries must be created with \"htpasswd -s\" for SHA password hashes or \"htpasswd -B\" for bcrypt hashes (preferred)")
 	flagSet.Bool("display-htpasswd-form", true, "display username / password login form if an htpasswd file is provided")
 	flagSet.String("custom-templates-dir", "", "path to custom html templates")
 	flagSet.String("footer", "", "custom footer string. Use \"-\" to disable default footer.")
