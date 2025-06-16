@@ -41,7 +41,7 @@ sections cover more on restricting access.
 
 ### Limiting access to users
 
-While you can use the `--email-domains` and `--authenticated-emails-file` to match users directly,
+While you can use the `--email-domain` and `--authenticated-emails-file` to match users directly,
 the proxy works best when you delegate authorization to the OpenShift master by specifying what permissions
 you expect the user to have. This allows you to leverage OpenShift RBAC and groups to map users to
 permissions centrally.
