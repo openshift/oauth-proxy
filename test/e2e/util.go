@@ -15,10 +15,11 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
-	"os/exec"
 	"strings"
 	"testing"
 	"time"
+
+	"golang.org/x/crypto/bcrypt"
 
 	"github.com/stretchr/testify/require"
 	"golang.org/x/net/html"
@@ -26,6 +27,7 @@ import (
 	authorizationv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -40,7 +42,6 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 	routev1 "github.com/openshift/api/route/v1"
 	configv1client "github.com/openshift/client-go/config/clientset/versioned/typed/config/v1"
-	projectclient "github.com/openshift/client-go/project/clientset/versioned"
 	routev1client "github.com/openshift/client-go/route/clientset/versioned/typed/route/v1"
 	userclients "github.com/openshift/client-go/user/clientset/versioned"
 	"github.com/openshift/library-go/pkg/config/clusteroperator/v1helpers"
@@ -54,11 +55,14 @@ const (
 	defaultTimeout = 30 * time.Second
 )
 
-func CreateTestProject(t *testing.T, kubeClient kubernetes.Interface, projectClient *projectclient.Clientset) string {
+func CreateTestProjectWithCancel(
+	ctx context.Context, t *testing.T,
+	kubeClient kubernetes.Interface,
+) (string, func()) {
 	newNamespace := names.SimpleNameGenerator.GenerateName("e2e-oauth-proxy-")
 
-	// e2e.Logf("Creating project %q", newNamespace)
-	_, err := kubeClient.CoreV1().Namespaces().Create(context.Background(),
+	ns, err := kubeClient.CoreV1().Namespaces().Create(
+		ctx,
 		&corev1.Namespace{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: newNamespace,
@@ -66,26 +70,44 @@ func CreateTestProject(t *testing.T, kubeClient kubernetes.Interface, projectCli
 					"test": "oauth-proxy",
 				},
 			},
-		}, metav1.CreateOptions{})
-	require.NoError(t, err)
-
-	err = waitForSelfSAR(1*time.Second, 60*time.Second, kubeClient, authorizationv1.SelfSubjectAccessReviewSpec{
-		ResourceAttributes: &authorizationv1.ResourceAttributes{
-			Namespace: newNamespace,
-			Verb:      "create",
-			Group:     "",
-			Resource:  "pods",
 		},
-	})
+		metav1.CreateOptions{},
+	)
 	require.NoError(t, err)
 
-	return newNamespace
+	err = waitForSelfSAR(
+		ctx, 1*time.Second, 60*time.Second,
+		kubeClient, authorizationv1.SelfSubjectAccessReviewSpec{
+			ResourceAttributes: &authorizationv1.ResourceAttributes{
+				Namespace: newNamespace,
+				Verb:      "create",
+				Group:     "",
+				Resource:  "pods",
+			},
+		},
+	)
+	require.NoError(t, err)
+
+	return newNamespace, func() {
+		err = kubeClient.CoreV1().Namespaces().Delete(
+			ctx, ns.Name, metav1.DeleteOptions{},
+		)
+		if err != nil {
+			t.Errorf("Error deleting test namespace %s: %v", ns.Name, err)
+		}
+	}
 }
 
-func waitForSelfSAR(interval, timeout time.Duration, c kubernetes.Interface, selfSAR authorizationv1.SelfSubjectAccessReviewSpec) error {
+func waitForSelfSAR(
+	ctx context.Context,
+	interval,
+	timeout time.Duration,
+	c kubernetes.Interface,
+	selfSAR authorizationv1.SelfSubjectAccessReviewSpec,
+) error {
 	err := wait.PollImmediate(interval, timeout, func() (bool, error) {
 		res, err := c.AuthorizationV1().SelfSubjectAccessReviews().Create(
-			context.Background(),
+			ctx,
 			&authorizationv1.SelfSubjectAccessReview{
 				Spec: selfSAR,
 			},
@@ -99,7 +121,10 @@ func waitForSelfSAR(interval, timeout time.Duration, c kubernetes.Interface, sel
 	})
 
 	if err != nil {
-		return fmt.Errorf("failed to wait for SelfSAR (ResourceAttributes: %#v, NonResourceAttributes: %#v), err: %v", selfSAR.ResourceAttributes, selfSAR.NonResourceAttributes, err)
+		return fmt.Errorf(
+			"failed to wait for SelfSAR (ResourceAttributes: %#v, NonResourceAttributes: %#v), err: %v",
+			selfSAR.ResourceAttributes, selfSAR.NonResourceAttributes, err,
+		)
 	}
 
 	return nil
@@ -107,19 +132,16 @@ func waitForSelfSAR(interval, timeout time.Duration, c kubernetes.Interface, sel
 
 // Waits default amount of time (PodStartTimeout) for the specified pod to become running.
 // Returns an error if timeout occurs first, or pod goes in to failed state.
-func waitForPodRunningInNamespace(c kubernetes.Interface, pod *corev1.Pod) error {
+func waitForPodRunningInNamespace(ctx context.Context, c kubernetes.Interface, pod *corev1.Pod) error {
 	if pod.Status.Phase == corev1.PodRunning {
 		return nil
 	}
-	return waitTimeoutForPodRunningInNamespace(c, pod.Name, pod.Namespace, defaultTimeout)
+	return wait.PollImmediate(Poll, defaultTimeout, podRunning(ctx, c, pod.Name, pod.Namespace))
+
 }
 
-func waitTimeoutForPodRunningInNamespace(c kubernetes.Interface, podName, namespace string, timeout time.Duration) error {
-	return wait.PollImmediate(Poll, defaultTimeout, podRunning(c, podName, namespace))
-}
-
-func waitForPodDeletion(c kubernetes.Interface, podName, namespace string) error {
-	return wait.PollImmediate(Poll, defaultTimeout, podDeleted(c, podName, namespace))
+func waitForPodDeletion(ctx context.Context, c kubernetes.Interface, podName, namespace string) error {
+	return wait.PollImmediate(Poll, defaultTimeout, podDeleted(ctx, c, podName, namespace))
 }
 
 func waitForHealthzCheck(t *testing.T, transport http.RoundTripper, url string) error {
@@ -137,9 +159,9 @@ func waitForHealthzCheck(t *testing.T, transport http.RoundTripper, url string) 
 	})
 }
 
-func podDeleted(c kubernetes.Interface, podName, namespace string) wait.ConditionFunc {
+func podDeleted(ctx context.Context, c kubernetes.Interface, podName, namespace string) wait.ConditionFunc {
 	return func() (bool, error) {
-		_, err := c.CoreV1().Pods(namespace).Get(context.Background(), podName, metav1.GetOptions{})
+		_, err := c.CoreV1().Pods(namespace).Get(ctx, podName, metav1.GetOptions{})
 		if err != nil {
 			if errors.IsNotFound(err) {
 				return true, nil
@@ -150,9 +172,9 @@ func podDeleted(c kubernetes.Interface, podName, namespace string) wait.Conditio
 	}
 }
 
-func podRunning(c kubernetes.Interface, podName, namespace string) wait.ConditionFunc {
+func podRunning(ctx context.Context, c kubernetes.Interface, podName, namespace string) wait.ConditionFunc {
 	return func() (bool, error) {
-		pod, err := c.CoreV1().Pods(namespace).Get(context.Background(), podName, metav1.GetOptions{})
+		pod, err := c.CoreV1().Pods(namespace).Get(ctx, podName, metav1.GetOptions{})
 		if err != nil {
 			return false, err
 		}
@@ -382,30 +404,37 @@ func newRequestFromForm(form *html.Node, currentURL *url.URL, user, password str
 	addedSubmit := false
 	for _, input := range getElementsByTagName(form, "input") {
 		if name, ok := getAttr(input, "name"); ok {
-			if value, ok := getAttr(input, "value"); ok {
-				inputType, _ := getAttr(input, "type")
+			value, hasValue := getAttr(input, "value")
+			inputType, _ := getAttr(input, "type")
 
-				switch inputType {
-				case "text":
-					if name == "username" {
-						formData.Add(name, user)
-					}
-				case "password":
-					if name == "password" {
-						formData.Add(name, password)
-					}
-				case "submit":
-					// If this is a submit input, only add the value of the first one.
-					// We're simulating submitting the form.
-					if !addedSubmit {
-						formData.Add(name, value)
-						addedSubmit = true
-					}
-				case "radio", "checkbox":
-					if _, checked := getAttr(input, "checked"); checked {
-						formData.Add(name, value)
-					}
-				default:
+			switch inputType {
+			case "text":
+				if name == "username" {
+					formData.Add(name, user)
+				} else if hasValue {
+					formData.Add(name, value)
+				}
+			case "password":
+				if name == "password" {
+					formData.Add(name, password)
+				}
+			case "submit":
+				// If this is a submit input, only add the value of the first one.
+				// We're simulating submitting the form.
+				if !addedSubmit && hasValue {
+					formData.Add(name, value)
+					addedSubmit = true
+				}
+			case "radio", "checkbox":
+				if _, checked := getAttr(input, "checked"); checked && hasValue {
+					formData.Add(name, value)
+				}
+			case "hidden":
+				if hasValue {
+					formData.Add(name, value)
+				}
+			default:
+				if hasValue {
 					formData.Add(name, value)
 				}
 			}
@@ -432,7 +461,26 @@ func newRequestFromForm(form *html.Node, currentURL *url.URL, user, password str
 }
 
 // Varying the login name for each test ensures we test a fresh grant
+func generateHTPasswdData(users []string) []byte {
+	// Generate bcrypt hash of 'password'
+	passwordBytes, err := bcrypt.GenerateFromPassword([]byte("password"), bcrypt.DefaultCost)
+	if err != nil {
+		panic(fmt.Sprintf("failed to generate bcrypt hash: %v", err))
+	}
+	passwordHash := string(passwordBytes)
+
+	var lines []string
+	for _, user := range users {
+		lines = append(lines, user+":"+passwordHash)
+	}
+
+	htpasswdContent := strings.Join(lines, "\n") + "\n"
+
+	return []byte(htpasswdContent)
+}
+
 func createTestIdP(
+	ctx context.Context,
 	t *testing.T,
 	kubeClient *kubernetes.Clientset,
 	oauthClient configv1client.OAuthInterface,
@@ -440,50 +488,56 @@ func createTestIdP(
 	nsName string,
 	numUsers int,
 ) ([]string, func()) {
-	oauthConfig, err := oauthClient.Get(context.TODO(), "cluster", metav1.GetOptions{})
+	oauthConfig, err := oauthClient.Get(ctx, "cluster", metav1.GetOptions{})
 	require.NoError(t, err)
 
 	var users []string
 	for i := 0; i < numUsers; i++ {
-		users = append(users, fmt.Sprintf("testuser%d", i))
+		users = append(users, fmt.Sprintf("testuser-%d", i))
 	}
 
-	htpasswdSecretName := nsName + "htpasswd"
-	kubeClient.CoreV1().Secrets("openshift-config").Create(context.TODO(),
+	secret, err := kubeClient.CoreV1().Secrets("openshift-config").Create(
+		ctx,
 		&corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{
-				Name: htpasswdSecretName,
+				Name: nsName + "htpasswd",
 			},
 			Data: map[string][]byte{
-				"htpasswd": []byte(strings.Join(users, ":$2y$05$0Fk2s.0FbLy0FZ82JAqajOV/kbT/wqKX5/QFKgps6J69J2jY6r5ZG\n")), // bcrypt of 'password'
+				"htpasswd": generateHTPasswdData(users), // bcrypt of 'password'
 			},
 		},
 		metav1.CreateOptions{},
 	)
+	if err != nil {
+		t.Errorf("failed to create secret: %v", err)
+	}
 
-	oauthConfig.Spec.IdentityProviders = append(
-		oauthConfig.Spec.IdentityProviders, configv1.IdentityProvider{
+	oauthConfig.Spec.IdentityProviders = []configv1.IdentityProvider{
+		{
 			Name: nsName,
 			IdentityProviderConfig: configv1.IdentityProviderConfig{
 				Type: "HTPasswd",
 				HTPasswd: &configv1.HTPasswdIdentityProvider{
 					FileData: configv1.SecretNameReference{
-						Name: htpasswdSecretName,
+						Name: secret.Name,
 					},
 				},
 			},
 		},
-	)
+	}
 
-	_, err = oauthClient.Update(context.TODO(), oauthConfig, metav1.UpdateOptions{})
+	_, err = oauthClient.Update(ctx, oauthConfig, metav1.UpdateOptions{})
 	require.NoError(t, err)
 
 	cleanup := func() {
-		err := kubeClient.CoreV1().Secrets("openshift-config").Delete(context.TODO(), nsName+"htpasswd", metav1.DeleteOptions{})
+		t.Log("Cleaning up test IdP")
+		err := kubeClient.CoreV1().Secrets("openshift-config").Delete(
+			ctx, nsName+"htpasswd", metav1.DeleteOptions{},
+		)
 		if err != nil {
 			t.Logf("failed to delete secret openshift-config/%shtpasswd: %v", nsName, err)
 		}
-		oauthConfig, err := oauthClient.Get(context.TODO(), "cluster", metav1.GetOptions{})
+		oauthConfig, err := oauthClient.Get(ctx, "cluster", metav1.GetOptions{})
 		if err != nil {
 			t.Logf("failed to get the oauth/cluster config during cleanup: %v", err)
 		}
@@ -493,22 +547,27 @@ func createTestIdP(
 				break
 			}
 		}
-		_, err = oauthClient.Update(context.TODO(), oauthConfig, metav1.UpdateOptions{})
+		_, err = oauthClient.Update(ctx, oauthConfig, metav1.UpdateOptions{})
 		if err != nil {
 			t.Logf("failed to remove the test IdP from oauth/cluster: %s", err)
 		}
 
 		for i := 0; i < numUsers; i++ {
-			username := fmt.Sprintf("testuser%d", i)
+			username := fmt.Sprintf("testuser-%d", i)
 			identityName := fmt.Sprintf("%s:%s", nsName, username)
-			if err := userClientSet.UserV1().Users().Delete(context.TODO(), username, metav1.DeleteOptions{}); err != nil && !errors.IsNotFound(err) {
+			if err := userClientSet.UserV1().Users().Delete(
+				ctx, username, metav1.DeleteOptions{},
+			); err != nil && !errors.IsNotFound(err) {
 				t.Logf("failed to remove user: %s", username)
 			}
-			if err := userClientSet.UserV1().Identities().Delete(context.TODO(), identityName, metav1.DeleteOptions{}); err != nil && !errors.IsNotFound(err) {
+			if err := userClientSet.UserV1().Identities().Delete(
+				ctx, identityName, metav1.DeleteOptions{},
+			); err != nil && !errors.IsNotFound(err) {
 				t.Logf("failed to remove identity: %s", identityName)
 			}
 		}
 	}
+
 	return users, cleanup
 }
 
@@ -517,58 +576,34 @@ func deleteProvider(provider []configv1.IdentityProvider, idx int) []configv1.Id
 	return provider[:len(provider)-1]
 }
 
-// execCmd executes a command and returns the stdout + error, if any
-func execCmd(cmd string, args []string, input string) (string, error) {
-	c := exec.Command(cmd, args...)
-	stdin, err := c.StdinPipe()
+func deleteTestRoute(t *testing.T, routeClient routev1client.RouteInterface, routeName string) error {
+	ctx := context.Background()
+	return routeClient.Delete(ctx, routeName, metav1.DeleteOptions{})
+}
+
+func getRouteHost(ctx context.Context, t *testing.T, routeClient routev1client.RouteInterface, routeName string) (string, error) {
+	route, err := routeClient.Get(ctx, routeName, metav1.GetOptions{})
 	if err != nil {
 		return "", err
 	}
-
-	go func() {
-		defer stdin.Close()
-		if input != "" {
-			io.WriteString(stdin, input)
-		}
-	}()
-
-	out, err := c.CombinedOutput()
-	if err != nil {
-		fmt.Printf("Command '%s' failed with: %s\n", cmd, err)
-		fmt.Printf("Output: %s\n", out)
-		return "", err
-	}
-	return string(out), nil
+	return route.Spec.Host, nil
 }
 
-func deleteTestRoute(routeName, namespace string) error {
-	_, err := execCmd("oc", []string{"delete", fmt.Sprintf("route/%s", routeName), "-n", namespace}, "")
-	if err != nil {
-		return err
+func newOAuthProxyService(suffix string) *corev1.Service {
+	name := "proxy"
+	if len(suffix) > 0 {
+		name = fmt.Sprintf("proxy-%s", suffix)
 	}
-	return nil
-}
-
-func getRouteHost(routeName, namespace string) (string, error) {
-	out, err := execCmd("oc", []string{"get", fmt.Sprintf("route/%s", routeName), "-o", "jsonpath='{.spec.host}'", "-n", namespace}, "")
-	if err != nil {
-		return "", err
-	}
-	// strip surrounding single quotes
-	return out[1 : len(out)-1], nil
-}
-
-func newOAuthProxyService() *corev1.Service {
 	return &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: "proxy",
+			Name: name,
 			Labels: map[string]string{
-				"app": "proxy",
+				"app": name,
 			},
 		},
 		Spec: corev1.ServiceSpec{
 			Selector: map[string]string{
-				"app": "proxy",
+				"app": name,
 			},
 			Ports: []corev1.ServicePort{
 				{
@@ -582,14 +617,22 @@ func newOAuthProxyService() *corev1.Service {
 }
 
 // create a route using oc create directly
-func createOAuthProxyRoute(t *testing.T, routeClient routev1client.RouteInterface) string {
+func createOAuthProxyRoute(ctx context.Context, t *testing.T, routeClient routev1client.RouteInterface, suffix string) string {
+	routeName := "proxy-route"
+	serviceName := "proxy"
+	appLabel := "proxy"
+	if suffix != "" {
+		routeName = fmt.Sprintf("proxy-route-%s", suffix)
+		serviceName = fmt.Sprintf("proxy-%s", suffix)
+		appLabel = fmt.Sprintf("proxy-%s", suffix)
+	}
 	route, err := routeClient.Create(
-		context.TODO(),
+		ctx,
 		&routev1.Route{
 			ObjectMeta: metav1.ObjectMeta{
-				Name: "proxy-route",
+				Name: routeName,
 				Labels: map[string]string{
-					"app": "proxy",
+					"app": appLabel,
 				},
 			},
 			Spec: routev1.RouteSpec{
@@ -598,7 +641,7 @@ func createOAuthProxyRoute(t *testing.T, routeClient routev1client.RouteInterfac
 				},
 				To: routev1.RouteTargetReference{
 					Kind:   "Service",
-					Name:   "proxy",
+					Name:   serviceName,
 					Weight: pint32(100),
 				},
 				WildcardPolicy: routev1.WildcardPolicyNone,
@@ -617,25 +660,35 @@ func createOAuthProxyRoute(t *testing.T, routeClient routev1client.RouteInterfac
 func pint32(i int32) *int32 { return &i }
 func pbool(b bool) *bool    { return &b }
 
-func newOAuthProxySA() *corev1.ServiceAccount {
+func newOAuthProxySA(suffix string) *corev1.ServiceAccount {
+	name := "proxy"
+	routeName := "proxy-route"
+	if suffix != "" {
+		name = fmt.Sprintf("proxy-%s", suffix)
+		routeName = fmt.Sprintf("proxy-route-%s", suffix)
+	}
 	return &corev1.ServiceAccount{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: "proxy",
+			Name: name,
 			Annotations: map[string]string{
-				"serviceaccounts.openshift.io/oauth-redirectreference.primary": `{"kind":"OAuthRedirectReference","apiVersion":"v1","reference":{"kind":"Route","name":"proxy-route"}}`,
+				"serviceaccounts.openshift.io/oauth-redirectreference.primary": fmt.Sprintf(`{"kind":"OAuthRedirectReference","apiVersion":"v1","reference":{"kind":"Route","name":"%s"}}`, routeName),
 			},
 		},
 	}
 }
 
-func newOAuthProxyConfigMap(namespace string, pemCA, pemServerCert, pemServerKey, upstreamCA, upstreamCert, upstreamKey []byte) *corev1.ConfigMap {
+func newOAuthProxyConfigMap(namespace string, suffix string, pemCA, pemServerCert, pemServerKey, upstreamCA, upstreamCert, upstreamKey []byte) *corev1.ConfigMap {
+	name := "proxy-certs"
+	if suffix != "" {
+		name = fmt.Sprintf("proxy-certs-%s", suffix)
+	}
 	return &corev1.ConfigMap{
 		TypeMeta: metav1.TypeMeta{
 			Kind:       "ConfigMap",
 			APIVersion: "v1",
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "proxy-certs",
+			Name:      name,
 			Namespace: namespace,
 		},
 		Data: map[string]string{
@@ -649,7 +702,7 @@ func newOAuthProxyConfigMap(namespace string, pemCA, pemServerCert, pemServerKey
 	}
 }
 
-func newOAuthProxyPod(proxyImage, backendImage string, extraProxyArgs []string, envVars ...string) *corev1.Pod {
+func newOAuthProxyPod(proxyImage, backendImage string, suffix string, extraProxyArgs []string, envVars ...string) *corev1.Pod {
 	backendEnvVars := []corev1.EnvVar{}
 	for _, env := range envVars {
 		e := strings.Split(env, "=")
@@ -659,9 +712,18 @@ func newOAuthProxyPod(proxyImage, backendImage string, extraProxyArgs []string, 
 		backendEnvVars = append(backendEnvVars, corev1.EnvVar{Name: e[0], Value: e[1]})
 	}
 
+	name := "proxy"
+	serviceAccountName := "proxy"
+	configMapName := "proxy-certs"
+	if suffix != "" {
+		name = fmt.Sprintf("proxy-%s", suffix)
+		serviceAccountName = fmt.Sprintf("proxy-%s", suffix)
+		configMapName = fmt.Sprintf("proxy-certs-%s", suffix)
+	}
+
 	proxyArgs := append([]string{
 		"--provider=openshift",
-		"--openshift-service-account=proxy",
+		fmt.Sprintf("--openshift-service-account=%s", serviceAccountName),
 		"--https-address=:8443",
 		"--tls-cert=/etc/tls/private/tls.crt",
 		"--tls-key=/etc/tls/private/tls.key",
@@ -672,9 +734,9 @@ func newOAuthProxyPod(proxyImage, backendImage string, extraProxyArgs []string, 
 
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: "proxy",
+			Name: name,
 			Labels: map[string]string{
-				"app": "proxy",
+				"app": name,
 			},
 		},
 		Spec: corev1.PodSpec{
@@ -688,12 +750,12 @@ func newOAuthProxyPod(proxyImage, backendImage string, extraProxyArgs []string, 
 					Name: "proxy-cert-volume",
 					VolumeSource: corev1.VolumeSource{
 						ConfigMap: &corev1.ConfigMapVolumeSource{
-							LocalObjectReference: corev1.LocalObjectReference{Name: "proxy-certs"},
+							LocalObjectReference: corev1.LocalObjectReference{Name: configMapName},
 						},
 					},
 				},
 			},
-			ServiceAccountName: "proxy",
+			ServiceAccountName: serviceAccountName,
 			Containers: []corev1.Container{
 				{
 					Image:           proxyImage,
@@ -741,10 +803,35 @@ func newOAuthProxyPod(proxyImage, backendImage string, extraProxyArgs []string, 
 	}
 }
 
+func newOAuthProxyRoleBinding(user, namespace string) *rbacv1.RoleBinding {
+	return &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "sar-" + user,
+			Namespace: namespace,
+		},
+		Subjects: []rbacv1.Subject{{
+			Kind:     "User",
+			Name:     user,
+			APIGroup: "rbac.authorization.k8s.io",
+		}},
+		RoleRef: rbacv1.RoleRef{
+			Kind:     "ClusterRole",
+			Name:     "admin",
+			APIGroup: "rbac.authorization.k8s.io",
+		},
+	}
+}
+
 // NewClientConfigForTest returns a config configured to connect to the api server
 func NewClientConfigForTest(t *testing.T) *rest.Config {
 	loader := clientcmd.NewDefaultClientConfigLoadingRules()
-	clientConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loader, &clientcmd.ConfigOverrides{ClusterInfo: cmdapi.Cluster{InsecureSkipTLSVerify: true}})
+	clientConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
+		loader,
+		&clientcmd.ConfigOverrides{
+			ClusterInfo: cmdapi.Cluster{InsecureSkipTLSVerify: true},
+		},
+	)
+
 	config, err := clientConfig.ClientConfig()
 	if err == nil {
 		t.Logf("Found configuration for host %v.\n", config.Host)
@@ -754,10 +841,10 @@ func NewClientConfigForTest(t *testing.T) *rest.Config {
 	return config
 }
 
-func WaitForClusterOperatorStatus(t *testing.T, client configv1client.ConfigV1Interface, available, progressing, degraded *bool) error {
+func WaitForClusterOperatorStatus(ctx context.Context, t *testing.T, client configv1client.ConfigV1Interface, available, progressing, degraded *bool) error {
 	status := map[configv1.ClusterStatusConditionType]bool{} // struct for easy printing the conditions
 	return wait.PollImmediate(time.Second, 10*time.Minute, func() (bool, error) {
-		clusterOperator, err := client.ClusterOperators().Get(context.TODO(), "authentication", metav1.GetOptions{})
+		clusterOperator, err := client.ClusterOperators().Get(ctx, "authentication", metav1.GetOptions{})
 		if errors.IsNotFound(err) {
 			t.Logf("clusteroperators.config.openshift.io/authentication: %v", err)
 			return false, nil
@@ -785,4 +872,33 @@ func WaitForClusterOperatorStatus(t *testing.T, client configv1client.ConfigV1In
 		done := availableStatusIsMatch && progressingStatusIsMatch && degradedStatusIsMatch
 		return done, nil
 	})
+}
+
+func getPageTitle(titleElements []*html.Node) string {
+	if len(titleElements) == 0 {
+		return "<no title>"
+	}
+
+	// Get all text content from the title element
+	var titleText strings.Builder
+	for child := titleElements[0].FirstChild; child != nil; child = child.NextSibling {
+		if child.Type == html.TextNode {
+			titleText.WriteString(child.Data)
+		}
+	}
+
+	if titleText.Len() == 0 {
+		return "<empty title>"
+	}
+
+	// Clean up whitespace and normalize
+	result := strings.TrimSpace(titleText.String())
+	result = strings.ReplaceAll(result, "\n", " ")
+	result = strings.ReplaceAll(result, "\t", " ")
+	// Replace multiple spaces with single space
+	for strings.Contains(result, "  ") {
+		result = strings.ReplaceAll(result, "  ", " ")
+	}
+
+	return result
 }
