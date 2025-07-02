@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"k8s.io/apiserver/pkg/apis/apiserver"
 	"k8s.io/apiserver/pkg/authentication/authenticatorfactory"
 	"k8s.io/apiserver/pkg/authentication/request/headerrequest"
 	"k8s.io/apiserver/pkg/server/dynamiccertificates"
@@ -158,7 +159,7 @@ func (s *DelegatingAuthenticationOptions) ToAuthenticationConfig() (authenticato
 	}
 
 	ret := authenticatorfactory.DelegatingAuthenticatorConfig{
-		Anonymous:                          true,
+		Anonymous:                          &apiserver.AnonymousAuthConfig{Enabled: true},
 		TokenAccessReviewClient:            tokenClient,
 		WebhookRetryBackoff:                serveroptions.DefaultAuthWebhookRetryBackoff(),
 		CacheTTL:                           s.CacheTTL,
