@@ -3,20 +3,21 @@
 package v1
 
 import (
-	v1 "github.com/openshift/api/config/v1"
+	configv1 "github.com/openshift/api/config/v1"
 )
 
-// AuthenticationSpecApplyConfiguration represents an declarative configuration of the AuthenticationSpec type for use
+// AuthenticationSpecApplyConfiguration represents a declarative configuration of the AuthenticationSpec type for use
 // with apply.
 type AuthenticationSpecApplyConfiguration struct {
-	Type                       *v1.AuthenticationType                                  `json:"type,omitempty"`
+	Type                       *configv1.AuthenticationType                            `json:"type,omitempty"`
 	OAuthMetadata              *ConfigMapNameReferenceApplyConfiguration               `json:"oauthMetadata,omitempty"`
 	WebhookTokenAuthenticators []DeprecatedWebhookTokenAuthenticatorApplyConfiguration `json:"webhookTokenAuthenticators,omitempty"`
 	WebhookTokenAuthenticator  *WebhookTokenAuthenticatorApplyConfiguration            `json:"webhookTokenAuthenticator,omitempty"`
 	ServiceAccountIssuer       *string                                                 `json:"serviceAccountIssuer,omitempty"`
+	OIDCProviders              []OIDCProviderApplyConfiguration                        `json:"oidcProviders,omitempty"`
 }
 
-// AuthenticationSpecApplyConfiguration constructs an declarative configuration of the AuthenticationSpec type for use with
+// AuthenticationSpecApplyConfiguration constructs a declarative configuration of the AuthenticationSpec type for use with
 // apply.
 func AuthenticationSpec() *AuthenticationSpecApplyConfiguration {
 	return &AuthenticationSpecApplyConfiguration{}
@@ -25,7 +26,7 @@ func AuthenticationSpec() *AuthenticationSpecApplyConfiguration {
 // WithType sets the Type field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the Type field is set to the value of the last call.
-func (b *AuthenticationSpecApplyConfiguration) WithType(value v1.AuthenticationType) *AuthenticationSpecApplyConfiguration {
+func (b *AuthenticationSpecApplyConfiguration) WithType(value configv1.AuthenticationType) *AuthenticationSpecApplyConfiguration {
 	b.Type = &value
 	return b
 }
@@ -64,5 +65,18 @@ func (b *AuthenticationSpecApplyConfiguration) WithWebhookTokenAuthenticator(val
 // If called multiple times, the ServiceAccountIssuer field is set to the value of the last call.
 func (b *AuthenticationSpecApplyConfiguration) WithServiceAccountIssuer(value string) *AuthenticationSpecApplyConfiguration {
 	b.ServiceAccountIssuer = &value
+	return b
+}
+
+// WithOIDCProviders adds the given value to the OIDCProviders field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the OIDCProviders field.
+func (b *AuthenticationSpecApplyConfiguration) WithOIDCProviders(values ...*OIDCProviderApplyConfiguration) *AuthenticationSpecApplyConfiguration {
+	for i := range values {
+		if values[i] == nil {
+			panic("nil value passed to WithOIDCProviders")
+		}
+		b.OIDCProviders = append(b.OIDCProviders, *values[i])
+	}
 	return b
 }

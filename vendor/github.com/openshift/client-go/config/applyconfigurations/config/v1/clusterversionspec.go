@@ -3,21 +3,22 @@
 package v1
 
 import (
-	v1 "github.com/openshift/api/config/v1"
+	configv1 "github.com/openshift/api/config/v1"
 )
 
-// ClusterVersionSpecApplyConfiguration represents an declarative configuration of the ClusterVersionSpec type for use
+// ClusterVersionSpecApplyConfiguration represents a declarative configuration of the ClusterVersionSpec type for use
 // with apply.
 type ClusterVersionSpecApplyConfiguration struct {
-	ClusterID     *v1.ClusterID                                     `json:"clusterID,omitempty"`
-	DesiredUpdate *UpdateApplyConfiguration                         `json:"desiredUpdate,omitempty"`
-	Upstream      *v1.URL                                           `json:"upstream,omitempty"`
-	Channel       *string                                           `json:"channel,omitempty"`
-	Capabilities  *ClusterVersionCapabilitiesSpecApplyConfiguration `json:"capabilities,omitempty"`
-	Overrides     []ComponentOverrideApplyConfiguration             `json:"overrides,omitempty"`
+	ClusterID       *configv1.ClusterID                               `json:"clusterID,omitempty"`
+	DesiredUpdate   *UpdateApplyConfiguration                         `json:"desiredUpdate,omitempty"`
+	Upstream        *configv1.URL                                     `json:"upstream,omitempty"`
+	Channel         *string                                           `json:"channel,omitempty"`
+	Capabilities    *ClusterVersionCapabilitiesSpecApplyConfiguration `json:"capabilities,omitempty"`
+	SignatureStores []SignatureStoreApplyConfiguration                `json:"signatureStores,omitempty"`
+	Overrides       []ComponentOverrideApplyConfiguration             `json:"overrides,omitempty"`
 }
 
-// ClusterVersionSpecApplyConfiguration constructs an declarative configuration of the ClusterVersionSpec type for use with
+// ClusterVersionSpecApplyConfiguration constructs a declarative configuration of the ClusterVersionSpec type for use with
 // apply.
 func ClusterVersionSpec() *ClusterVersionSpecApplyConfiguration {
 	return &ClusterVersionSpecApplyConfiguration{}
@@ -26,7 +27,7 @@ func ClusterVersionSpec() *ClusterVersionSpecApplyConfiguration {
 // WithClusterID sets the ClusterID field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the ClusterID field is set to the value of the last call.
-func (b *ClusterVersionSpecApplyConfiguration) WithClusterID(value v1.ClusterID) *ClusterVersionSpecApplyConfiguration {
+func (b *ClusterVersionSpecApplyConfiguration) WithClusterID(value configv1.ClusterID) *ClusterVersionSpecApplyConfiguration {
 	b.ClusterID = &value
 	return b
 }
@@ -42,7 +43,7 @@ func (b *ClusterVersionSpecApplyConfiguration) WithDesiredUpdate(value *UpdateAp
 // WithUpstream sets the Upstream field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the Upstream field is set to the value of the last call.
-func (b *ClusterVersionSpecApplyConfiguration) WithUpstream(value v1.URL) *ClusterVersionSpecApplyConfiguration {
+func (b *ClusterVersionSpecApplyConfiguration) WithUpstream(value configv1.URL) *ClusterVersionSpecApplyConfiguration {
 	b.Upstream = &value
 	return b
 }
@@ -60,6 +61,19 @@ func (b *ClusterVersionSpecApplyConfiguration) WithChannel(value string) *Cluste
 // If called multiple times, the Capabilities field is set to the value of the last call.
 func (b *ClusterVersionSpecApplyConfiguration) WithCapabilities(value *ClusterVersionCapabilitiesSpecApplyConfiguration) *ClusterVersionSpecApplyConfiguration {
 	b.Capabilities = value
+	return b
+}
+
+// WithSignatureStores adds the given value to the SignatureStores field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the SignatureStores field.
+func (b *ClusterVersionSpecApplyConfiguration) WithSignatureStores(values ...*SignatureStoreApplyConfiguration) *ClusterVersionSpecApplyConfiguration {
+	for i := range values {
+		if values[i] == nil {
+			panic("nil value passed to WithSignatureStores")
+		}
+		b.SignatureStores = append(b.SignatureStores, *values[i])
+	}
 	return b
 }
 
