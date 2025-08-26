@@ -3,8 +3,6 @@
 
 package instrumentation // import "go.opentelemetry.io/otel/sdk/instrumentation"
 
-import "go.opentelemetry.io/otel/attribute"
-
 // Scope represents the instrumentation scope.
 type Scope struct {
 	// Name is the name of the instrumentation scope. This should be the
@@ -14,6 +12,4 @@ type Scope struct {
 	Version string
 	// SchemaURL of the telemetry emitted by the scope.
 	SchemaURL string
-	// Attributes of the telemetry emitted by the scope.
-	Attributes attribute.Set
 }

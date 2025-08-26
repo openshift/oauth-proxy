@@ -3,17 +3,17 @@
 package v1
 
 import (
-	metav1 "k8s.io/client-go/applyconfigurations/meta/v1"
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// FeatureGateStatusApplyConfiguration represents a declarative configuration of the FeatureGateStatus type for use
+// FeatureGateStatusApplyConfiguration represents an declarative configuration of the FeatureGateStatus type for use
 // with apply.
 type FeatureGateStatusApplyConfiguration struct {
-	Conditions   []metav1.ConditionApplyConfiguration   `json:"conditions,omitempty"`
+	Conditions   []v1.Condition                         `json:"conditions,omitempty"`
 	FeatureGates []FeatureGateDetailsApplyConfiguration `json:"featureGates,omitempty"`
 }
 
-// FeatureGateStatusApplyConfiguration constructs a declarative configuration of the FeatureGateStatus type for use with
+// FeatureGateStatusApplyConfiguration constructs an declarative configuration of the FeatureGateStatus type for use with
 // apply.
 func FeatureGateStatus() *FeatureGateStatusApplyConfiguration {
 	return &FeatureGateStatusApplyConfiguration{}
@@ -22,12 +22,9 @@ func FeatureGateStatus() *FeatureGateStatusApplyConfiguration {
 // WithConditions adds the given value to the Conditions field in the declarative configuration
 // and returns the receiver, so that objects can be build by chaining "With" function invocations.
 // If called multiple times, values provided by each call will be appended to the Conditions field.
-func (b *FeatureGateStatusApplyConfiguration) WithConditions(values ...*metav1.ConditionApplyConfiguration) *FeatureGateStatusApplyConfiguration {
+func (b *FeatureGateStatusApplyConfiguration) WithConditions(values ...v1.Condition) *FeatureGateStatusApplyConfiguration {
 	for i := range values {
-		if values[i] == nil {
-			panic("nil value passed to WithConditions")
-		}
-		b.Conditions = append(b.Conditions, *values[i])
+		b.Conditions = append(b.Conditions, values[i])
 	}
 	return b
 }

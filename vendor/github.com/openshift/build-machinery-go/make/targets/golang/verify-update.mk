@@ -3,12 +3,11 @@ include $(addprefix $(dir $(lastword $(MAKEFILE_LIST))), \
 )
 
 go_files_count :=$(words $(GO_FILES))
-chunk_size :=1000
 
 verify-gofmt:
 	$(info Running `$(GOFMT) $(GOFMT_FLAGS)` on $(go_files_count) file(s).)
 	@TMP=$$( mktemp ); \
-	find . -name '*.go' -not -path '*/vendor/*' -not -path '*/_output/*' -print | xargs -n $(chunk_size) $(GOFMT) $(GOFMT_FLAGS) | tee $${TMP}; \
+	$(GOFMT) $(GOFMT_FLAGS) $(GO_FILES) | tee $${TMP}; \
 	if [ -s $${TMP} ]; then \
 		echo "$@ failed - please run \`make update-gofmt\`"; \
 		exit 1; \
@@ -17,7 +16,7 @@ verify-gofmt:
 
 update-gofmt:
 	$(info Running `$(GOFMT) $(GOFMT_FLAGS) -w` on $(go_files_count) file(s).)
-	@find . -name '*.go' -not -path '*/vendor/*' -not -path '*/_output/*' -print | xargs -n $(chunk_size) $(GOFMT) $(GOFMT_FLAGS) -w
+	@$(GOFMT) $(GOFMT_FLAGS) -w $(GO_FILES)
 .PHONY: update-gofmt
 
 

@@ -2,14 +2,14 @@
 
 package v1
 
-// RegistryLocationApplyConfiguration represents a declarative configuration of the RegistryLocation type for use
+// RegistryLocationApplyConfiguration represents an declarative configuration of the RegistryLocation type for use
 // with apply.
 type RegistryLocationApplyConfiguration struct {
 	DomainName *string `json:"domainName,omitempty"`
 	Insecure   *bool   `json:"insecure,omitempty"`
 }
 
-// RegistryLocationApplyConfiguration constructs a declarative configuration of the RegistryLocation type for use with
+// RegistryLocationApplyConfiguration constructs an declarative configuration of the RegistryLocation type for use with
 // apply.
 func RegistryLocation() *RegistryLocationApplyConfiguration {
 	return &RegistryLocationApplyConfiguration{}

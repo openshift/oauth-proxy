@@ -160,7 +160,9 @@ var cidrLibraryDecls = map[string][]cel.FunctionOpt{
 }
 
 func (*cidrs) CompileOptions() []cel.EnvOption {
-	options := []cel.EnvOption{cel.Types(apiservercel.CIDRType)}
+	options := []cel.EnvOption{cel.Types(apiservercel.CIDRType),
+		cel.Variable(apiservercel.CIDRType.TypeName(), types.NewTypeTypeWithParam(apiservercel.CIDRType)),
+	}
 	for name, overloads := range cidrLibraryDecls {
 		options = append(options, cel.Function(name, overloads...))
 	}

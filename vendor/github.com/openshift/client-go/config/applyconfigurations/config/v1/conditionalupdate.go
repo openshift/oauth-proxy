@@ -3,18 +3,18 @@
 package v1
 
 import (
-	metav1 "k8s.io/client-go/applyconfigurations/meta/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// ConditionalUpdateApplyConfiguration represents a declarative configuration of the ConditionalUpdate type for use
+// ConditionalUpdateApplyConfiguration represents an declarative configuration of the ConditionalUpdate type for use
 // with apply.
 type ConditionalUpdateApplyConfiguration struct {
 	Release    *ReleaseApplyConfiguration                `json:"release,omitempty"`
 	Risks      []ConditionalUpdateRiskApplyConfiguration `json:"risks,omitempty"`
-	Conditions []metav1.ConditionApplyConfiguration      `json:"conditions,omitempty"`
+	Conditions []metav1.Condition                        `json:"conditions,omitempty"`
 }
 
-// ConditionalUpdateApplyConfiguration constructs a declarative configuration of the ConditionalUpdate type for use with
+// ConditionalUpdateApplyConfiguration constructs an declarative configuration of the ConditionalUpdate type for use with
 // apply.
 func ConditionalUpdate() *ConditionalUpdateApplyConfiguration {
 	return &ConditionalUpdateApplyConfiguration{}
@@ -44,12 +44,9 @@ func (b *ConditionalUpdateApplyConfiguration) WithRisks(values ...*ConditionalUp
 // WithConditions adds the given value to the Conditions field in the declarative configuration
 // and returns the receiver, so that objects can be build by chaining "With" function invocations.
 // If called multiple times, values provided by each call will be appended to the Conditions field.
-func (b *ConditionalUpdateApplyConfiguration) WithConditions(values ...*metav1.ConditionApplyConfiguration) *ConditionalUpdateApplyConfiguration {
+func (b *ConditionalUpdateApplyConfiguration) WithConditions(values ...metav1.Condition) *ConditionalUpdateApplyConfiguration {
 	for i := range values {
-		if values[i] == nil {
-			panic("nil value passed to WithConditions")
-		}
-		b.Conditions = append(b.Conditions, *values[i])
+		b.Conditions = append(b.Conditions, values[i])
 	}
 	return b
 }

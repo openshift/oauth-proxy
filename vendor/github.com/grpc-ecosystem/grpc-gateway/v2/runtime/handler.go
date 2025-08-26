@@ -3,7 +3,6 @@ package runtime
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"net/textproto"
@@ -56,33 +55,20 @@ func ForwardResponseStream(ctx context.Context, mux *ServeMux, marshaler Marshal
 			return
 		}
 
-		respRw, err := mux.forwardResponseRewriter(ctx, resp)
-		if err != nil {
-			grpclog.Errorf("Rewrite error: %v", err)
-			handleForwardResponseStreamError(ctx, wroteHeader, marshaler, w, req, mux, err, delimiter)
-			return
-		}
-
 		if !wroteHeader {
-			var contentType string
-			if sct, ok := marshaler.(StreamContentType); ok {
-				contentType = sct.StreamContentType(respRw)
-			} else {
-				contentType = marshaler.ContentType(respRw)
-			}
-			w.Header().Set("Content-Type", contentType)
+			w.Header().Set("Content-Type", marshaler.ContentType(resp))
 		}
 
 		var buf []byte
-		httpBody, isHTTPBody := respRw.(*httpbody.HttpBody)
+		httpBody, isHTTPBody := resp.(*httpbody.HttpBody)
 		switch {
-		case respRw == nil:
+		case resp == nil:
 			buf, err = marshaler.Marshal(errorChunk(status.New(codes.Internal, "empty response")))
 		case isHTTPBody:
 			buf = httpBody.GetData()
 		default:
-			result := map[string]interface{}{"result": respRw}
-			if rb, ok := respRw.(responseBody); ok {
+			result := map[string]interface{}{"result": resp}
+			if rb, ok := resp.(responseBody); ok {
 				result["result"] = rb.XXX_ResponseBody()
 			}
 
@@ -178,17 +164,12 @@ func ForwardResponseMessage(ctx context.Context, mux *ServeMux, marshaler Marsha
 		HTTPError(ctx, mux, marshaler, w, req, err)
 		return
 	}
-	respRw, err := mux.forwardResponseRewriter(ctx, resp)
-	if err != nil {
-		grpclog.Errorf("Rewrite error: %v", err)
-		HTTPError(ctx, mux, marshaler, w, req, err)
-		return
-	}
 	var buf []byte
-	if rb, ok := respRw.(responseBody); ok {
+	var err error
+	if rb, ok := resp.(responseBody); ok {
 		buf, err = marshaler.Marshal(rb.XXX_ResponseBody())
 	} else {
-		buf, err = marshaler.Marshal(respRw)
+		buf, err = marshaler.Marshal(resp)
 	}
 	if err != nil {
 		grpclog.Errorf("Marshal error: %v", err)
@@ -200,7 +181,7 @@ func ForwardResponseMessage(ctx context.Context, mux *ServeMux, marshaler Marsha
 		w.Header().Set("Content-Length", strconv.Itoa(len(buf)))
 	}
 
-	if _, err = w.Write(buf); err != nil && !errors.Is(err, http.ErrBodyNotAllowed) {
+	if _, err = w.Write(buf); err != nil {
 		grpclog.Errorf("Failed to write response: %v", err)
 	}
 
@@ -220,7 +201,8 @@ func handleForwardResponseOptions(ctx context.Context, w http.ResponseWriter, re
 	}
 	for _, opt := range opts {
 		if err := opt(ctx, w, resp); err != nil {
-			return fmt.Errorf("error handling ForwardResponseOptions: %w", err)
+			grpclog.Errorf("Error handling ForwardResponseOptions: %v", err)
+			return err
 		}
 	}
 	return nil

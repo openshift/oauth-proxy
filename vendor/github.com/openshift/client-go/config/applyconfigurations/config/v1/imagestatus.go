@@ -2,19 +2,14 @@
 
 package v1
 
-import (
-	configv1 "github.com/openshift/api/config/v1"
-)
-
-// ImageStatusApplyConfiguration represents a declarative configuration of the ImageStatus type for use
+// ImageStatusApplyConfiguration represents an declarative configuration of the ImageStatus type for use
 // with apply.
 type ImageStatusApplyConfiguration struct {
-	InternalRegistryHostname  *string                  `json:"internalRegistryHostname,omitempty"`
-	ExternalRegistryHostnames []string                 `json:"externalRegistryHostnames,omitempty"`
-	ImageStreamImportMode     *configv1.ImportModeType `json:"imageStreamImportMode,omitempty"`
+	InternalRegistryHostname  *string  `json:"internalRegistryHostname,omitempty"`
+	ExternalRegistryHostnames []string `json:"externalRegistryHostnames,omitempty"`
 }
 
-// ImageStatusApplyConfiguration constructs a declarative configuration of the ImageStatus type for use with
+// ImageStatusApplyConfiguration constructs an declarative configuration of the ImageStatus type for use with
 // apply.
 func ImageStatus() *ImageStatusApplyConfiguration {
 	return &ImageStatusApplyConfiguration{}
@@ -35,13 +30,5 @@ func (b *ImageStatusApplyConfiguration) WithExternalRegistryHostnames(values ...
 	for i := range values {
 		b.ExternalRegistryHostnames = append(b.ExternalRegistryHostnames, values[i])
 	}
-	return b
-}
-
-// WithImageStreamImportMode sets the ImageStreamImportMode field in the declarative configuration to the given value
-// and returns the receiver, so that objects can be built by chaining "With" function invocations.
-// If called multiple times, the ImageStreamImportMode field is set to the value of the last call.
-func (b *ImageStatusApplyConfiguration) WithImageStreamImportMode(value configv1.ImportModeType) *ImageStatusApplyConfiguration {
-	b.ImageStreamImportMode = &value
 	return b
 }

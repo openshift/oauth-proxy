@@ -2,11 +2,7 @@
 
 package v1
 
-import (
-	metav1 "k8s.io/client-go/applyconfigurations/meta/v1"
-)
-
-// NetworkStatusApplyConfiguration represents a declarative configuration of the NetworkStatus type for use
+// NetworkStatusApplyConfiguration represents an declarative configuration of the NetworkStatus type for use
 // with apply.
 type NetworkStatusApplyConfiguration struct {
 	ClusterNetwork    []ClusterNetworkEntryApplyConfiguration `json:"clusterNetwork,omitempty"`
@@ -14,10 +10,9 @@ type NetworkStatusApplyConfiguration struct {
 	NetworkType       *string                                 `json:"networkType,omitempty"`
 	ClusterNetworkMTU *int                                    `json:"clusterNetworkMTU,omitempty"`
 	Migration         *NetworkMigrationApplyConfiguration     `json:"migration,omitempty"`
-	Conditions        []metav1.ConditionApplyConfiguration    `json:"conditions,omitempty"`
 }
 
-// NetworkStatusApplyConfiguration constructs a declarative configuration of the NetworkStatus type for use with
+// NetworkStatusApplyConfiguration constructs an declarative configuration of the NetworkStatus type for use with
 // apply.
 func NetworkStatus() *NetworkStatusApplyConfiguration {
 	return &NetworkStatusApplyConfiguration{}
@@ -67,18 +62,5 @@ func (b *NetworkStatusApplyConfiguration) WithClusterNetworkMTU(value int) *Netw
 // If called multiple times, the Migration field is set to the value of the last call.
 func (b *NetworkStatusApplyConfiguration) WithMigration(value *NetworkMigrationApplyConfiguration) *NetworkStatusApplyConfiguration {
 	b.Migration = value
-	return b
-}
-
-// WithConditions adds the given value to the Conditions field in the declarative configuration
-// and returns the receiver, so that objects can be build by chaining "With" function invocations.
-// If called multiple times, values provided by each call will be appended to the Conditions field.
-func (b *NetworkStatusApplyConfiguration) WithConditions(values ...*metav1.ConditionApplyConfiguration) *NetworkStatusApplyConfiguration {
-	for i := range values {
-		if values[i] == nil {
-			panic("nil value passed to WithConditions")
-		}
-		b.Conditions = append(b.Conditions, *values[i])
-	}
 	return b
 }

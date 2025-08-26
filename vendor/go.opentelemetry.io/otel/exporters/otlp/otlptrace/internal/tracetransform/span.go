@@ -4,8 +4,6 @@
 package tracetransform // import "go.opentelemetry.io/otel/exporters/otlp/otlptrace/internal/tracetransform"
 
 import (
-	"math"
-
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/sdk/instrumentation"
@@ -97,16 +95,16 @@ func span(sd tracesdk.ReadOnlySpan) *tracepb.Span {
 		SpanId:                 sid[:],
 		TraceState:             sd.SpanContext().TraceState().String(),
 		Status:                 status(sd.Status().Code, sd.Status().Description),
-		StartTimeUnixNano:      uint64(max(0, sd.StartTime().UnixNano())), // nolint:gosec // Overflow checked.
-		EndTimeUnixNano:        uint64(max(0, sd.EndTime().UnixNano())),   // nolint:gosec // Overflow checked.
+		StartTimeUnixNano:      uint64(sd.StartTime().UnixNano()),
+		EndTimeUnixNano:        uint64(sd.EndTime().UnixNano()),
 		Links:                  links(sd.Links()),
 		Kind:                   spanKind(sd.SpanKind()),
 		Name:                   sd.Name(),
 		Attributes:             KeyValues(sd.Attributes()),
 		Events:                 spanEvents(sd.Events()),
-		DroppedAttributesCount: clampUint32(sd.DroppedAttributes()),
-		DroppedEventsCount:     clampUint32(sd.DroppedEvents()),
-		DroppedLinksCount:      clampUint32(sd.DroppedLinks()),
+		DroppedAttributesCount: uint32(sd.DroppedAttributes()),
+		DroppedEventsCount:     uint32(sd.DroppedEvents()),
+		DroppedLinksCount:      uint32(sd.DroppedLinks()),
 	}
 
 	if psid := sd.Parent().SpanID(); psid.IsValid() {
@@ -115,16 +113,6 @@ func span(sd tracesdk.ReadOnlySpan) *tracepb.Span {
 	s.Flags = buildSpanFlags(sd.Parent())
 
 	return s
-}
-
-func clampUint32(v int) uint32 {
-	if v < 0 {
-		return 0
-	}
-	if int64(v) > math.MaxUint32 {
-		return math.MaxUint32
-	}
-	return uint32(v) // nolint: gosec  // Overflow/Underflow checked.
 }
 
 // status transform a span code and message into an OTLP span status.
@@ -165,7 +153,7 @@ func links(links []tracesdk.Link) []*tracepb.Span_Link {
 			TraceId:                tid[:],
 			SpanId:                 sid[:],
 			Attributes:             KeyValues(otLink.Attributes),
-			DroppedAttributesCount: clampUint32(otLink.DroppedAttributeCount),
+			DroppedAttributesCount: uint32(otLink.DroppedAttributeCount),
 			Flags:                  flags,
 		})
 	}
@@ -178,7 +166,7 @@ func buildSpanFlags(sc trace.SpanContext) uint32 {
 		flags |= tracepb.SpanFlags_SPAN_FLAGS_CONTEXT_IS_REMOTE_MASK
 	}
 
-	return uint32(flags) // nolint:gosec // Flags is a bitmask and can't be negative
+	return uint32(flags)
 }
 
 // spanEvents transforms span Events to an OTLP span events.
@@ -192,9 +180,9 @@ func spanEvents(es []tracesdk.Event) []*tracepb.Span_Event {
 	for i := 0; i < len(es); i++ {
 		events[i] = &tracepb.Span_Event{
 			Name:                   es[i].Name,
-			TimeUnixNano:           uint64(max(0, es[i].Time.UnixNano())), // nolint:gosec // Overflow checked.
+			TimeUnixNano:           uint64(es[i].Time.UnixNano()),
 			Attributes:             KeyValues(es[i].Attributes),
-			DroppedAttributesCount: clampUint32(es[i].DroppedAttributeCount),
+			DroppedAttributesCount: uint32(es[i].DroppedAttributeCount),
 		}
 	}
 	return events

@@ -2,14 +2,14 @@
 
 package v1
 
-// EquinixMetalPlatformStatusApplyConfiguration represents a declarative configuration of the EquinixMetalPlatformStatus type for use
+// EquinixMetalPlatformStatusApplyConfiguration represents an declarative configuration of the EquinixMetalPlatformStatus type for use
 // with apply.
 type EquinixMetalPlatformStatusApplyConfiguration struct {
 	APIServerInternalIP *string `json:"apiServerInternalIP,omitempty"`
 	IngressIP           *string `json:"ingressIP,omitempty"`
 }
 
-// EquinixMetalPlatformStatusApplyConfiguration constructs a declarative configuration of the EquinixMetalPlatformStatus type for use with
+// EquinixMetalPlatformStatusApplyConfiguration constructs an declarative configuration of the EquinixMetalPlatformStatus type for use with
 // apply.
 func EquinixMetalPlatformStatus() *EquinixMetalPlatformStatusApplyConfiguration {
 	return &EquinixMetalPlatformStatusApplyConfiguration{}

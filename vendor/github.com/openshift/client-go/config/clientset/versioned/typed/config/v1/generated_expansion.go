@@ -8,8 +8,6 @@ type AuthenticationExpansion interface{}
 
 type BuildExpansion interface{}
 
-type ClusterImagePolicyExpansion interface{}
-
 type ClusterOperatorExpansion interface{}
 
 type ClusterVersionExpansion interface{}
@@ -25,8 +23,6 @@ type ImageExpansion interface{}
 type ImageContentPolicyExpansion interface{}
 
 type ImageDigestMirrorSetExpansion interface{}
-
-type ImagePolicyExpansion interface{}
 
 type ImageTagMirrorSetExpansion interface{}
 

@@ -10,12 +10,6 @@ import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 //
 // Compatibility level 1: Stable within a major release for a minimum of 12 months or 3 minor releases (whichever is longer).
 // +openshift:compatibility-gen:level=1
-// +openshift:api-approved.openshift.io=https://github.com/openshift/api/pull/470
-// +openshift:file-pattern=cvoRunLevel=0000_10,operatorName=config-operator,operatorOrdering=01
-// +kubebuilder:object:root=true
-// +kubebuilder:resource:path=dnses,scope=Cluster
-// +kubebuilder:subresource:status
-// +kubebuilder:metadata:annotations=release.openshift.io/bootstrap-required=true
 type DNS struct {
 	metav1.TypeMeta `json:",inline"`
 
@@ -24,6 +18,7 @@ type DNS struct {
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
 	// spec holds user settable values for configuration
+	// +kubebuilder:validation:Required
 	// +required
 	Spec DNSSpec `json:"spec"`
 	// status holds observed values from the cluster. They may not be overridden.
@@ -62,6 +57,7 @@ type DNSSpec struct {
 	// infrastructure provider for DNS.
 	// When omitted, this means the user has no opinion and the platform is left
 	// to choose reasonable defaults. These defaults are subject to change over time.
+	// +openshift:enable:FeatureSets=TechPreviewNoUpgrade
 	// +optional
 	Platform DNSPlatformSpec `json:"platform,omitempty"`
 }
@@ -120,7 +116,7 @@ type DNSPlatformSpec struct {
 	// and must handle unrecognized platforms with best-effort defaults.
 	//
 	// +unionDiscriminator
-	// +required
+	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:XValidation:rule="self in ['','AWS']",message="allowed values are '' and 'AWS'"
 	Type PlatformType `json:"type"`
 

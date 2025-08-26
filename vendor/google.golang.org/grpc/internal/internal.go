@@ -183,7 +183,7 @@ var (
 
 	// GRPCResolverSchemeExtraMetadata determines when gRPC will add extra
 	// metadata to RPCs.
-	GRPCResolverSchemeExtraMetadata = "xds"
+	GRPCResolverSchemeExtraMetadata string = "xds"
 
 	// EnterIdleModeForTesting gets the ClientConn to enter IDLE mode.
 	EnterIdleModeForTesting any // func(*grpc.ClientConn)
@@ -191,8 +191,6 @@ var (
 	// ExitIdleModeForTesting gets the ClientConn to exit IDLE mode.
 	ExitIdleModeForTesting any // func(*grpc.ClientConn) error
 
-	// ChannelzTurnOffForTesting disables the Channelz service for testing
-	// purposes.
 	ChannelzTurnOffForTesting func()
 
 	// TriggerXDSResourceNotFoundForTesting causes the provided xDS Client to
@@ -205,27 +203,11 @@ var (
 
 	// UserSetDefaultScheme is set to true if the user has overridden the
 	// default resolver scheme.
-	UserSetDefaultScheme = false
+	UserSetDefaultScheme bool = false
 
-	// ConnectedAddress returns the connected address for a SubConnState. The
-	// address is only valid if the state is READY.
-	ConnectedAddress any // func (scs SubConnState) resolver.Address
-
-	// SetConnectedAddress sets the connected address for a SubConnState.
-	SetConnectedAddress any // func(scs *SubConnState, addr resolver.Address)
-
-	// SnapshotMetricRegistryForTesting snapshots the global data of the metric
-	// registry. Returns a cleanup function that sets the metric registry to its
-	// original state. Only called in testing functions.
-	SnapshotMetricRegistryForTesting func() func()
-
-	// SetDefaultBufferPoolForTesting updates the default buffer pool, for
-	// testing purposes.
-	SetDefaultBufferPoolForTesting any // func(mem.BufferPool)
-
-	// SetBufferPoolingThresholdForTesting updates the buffer pooling threshold, for
-	// testing purposes.
-	SetBufferPoolingThresholdForTesting any // func(int)
+	// ShuffleAddressListForTesting pseudo-randomizes the order of addresses.  n
+	// is the number of elements.  swap swaps the elements with indexes i and j.
+	ShuffleAddressListForTesting any // func(n int, swap func(i, j int))
 )
 
 // HealthChecker defines the signature of the client-side LB channel health
@@ -233,7 +215,7 @@ var (
 //
 // The implementation is expected to create a health checking RPC stream by
 // calling newStream(), watch for the health status of serviceName, and report
-// its health back by calling setConnectivityState().
+// it's health back by calling setConnectivityState().
 //
 // The health checking protocol is defined at:
 // https://github.com/grpc/grpc/blob/master/doc/health-checking.md

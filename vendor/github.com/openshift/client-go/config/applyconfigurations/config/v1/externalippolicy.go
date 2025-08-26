@@ -2,14 +2,14 @@
 
 package v1
 
-// ExternalIPPolicyApplyConfiguration represents a declarative configuration of the ExternalIPPolicy type for use
+// ExternalIPPolicyApplyConfiguration represents an declarative configuration of the ExternalIPPolicy type for use
 // with apply.
 type ExternalIPPolicyApplyConfiguration struct {
 	AllowedCIDRs  []string `json:"allowedCIDRs,omitempty"`
 	RejectedCIDRs []string `json:"rejectedCIDRs,omitempty"`
 }
 
-// ExternalIPPolicyApplyConfiguration constructs a declarative configuration of the ExternalIPPolicy type for use with
+// ExternalIPPolicyApplyConfiguration constructs an declarative configuration of the ExternalIPPolicy type for use with
 // apply.
 func ExternalIPPolicy() *ExternalIPPolicyApplyConfiguration {
 	return &ExternalIPPolicyApplyConfiguration{}

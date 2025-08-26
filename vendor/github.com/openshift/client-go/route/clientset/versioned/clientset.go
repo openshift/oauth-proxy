@@ -3,8 +3,8 @@
 package versioned
 
 import (
-	fmt "fmt"
-	http "net/http"
+	"fmt"
+	"net/http"
 
 	routev1 "github.com/openshift/client-go/route/clientset/versioned/typed/route/v1"
 	discovery "k8s.io/client-go/discovery"
@@ -17,7 +17,8 @@ type Interface interface {
 	RouteV1() routev1.RouteV1Interface
 }
 
-// Clientset contains the clients for groups.
+// Clientset contains the clients for groups. Each group has exactly one
+// version included in a Clientset.
 type Clientset struct {
 	*discovery.DiscoveryClient
 	routeV1 *routev1.RouteV1Client

@@ -2,15 +2,14 @@
 
 package v1
 
-// NutanixPlatformSpecApplyConfiguration represents a declarative configuration of the NutanixPlatformSpec type for use
+// NutanixPlatformSpecApplyConfiguration represents an declarative configuration of the NutanixPlatformSpec type for use
 // with apply.
 type NutanixPlatformSpecApplyConfiguration struct {
-	PrismCentral   *NutanixPrismEndpointApplyConfiguration         `json:"prismCentral,omitempty"`
-	PrismElements  []NutanixPrismElementEndpointApplyConfiguration `json:"prismElements,omitempty"`
-	FailureDomains []NutanixFailureDomainApplyConfiguration        `json:"failureDomains,omitempty"`
+	PrismCentral  *NutanixPrismEndpointApplyConfiguration         `json:"prismCentral,omitempty"`
+	PrismElements []NutanixPrismElementEndpointApplyConfiguration `json:"prismElements,omitempty"`
 }
 
-// NutanixPlatformSpecApplyConfiguration constructs a declarative configuration of the NutanixPlatformSpec type for use with
+// NutanixPlatformSpecApplyConfiguration constructs an declarative configuration of the NutanixPlatformSpec type for use with
 // apply.
 func NutanixPlatformSpec() *NutanixPlatformSpecApplyConfiguration {
 	return &NutanixPlatformSpecApplyConfiguration{}
@@ -33,19 +32,6 @@ func (b *NutanixPlatformSpecApplyConfiguration) WithPrismElements(values ...*Nut
 			panic("nil value passed to WithPrismElements")
 		}
 		b.PrismElements = append(b.PrismElements, *values[i])
-	}
-	return b
-}
-
-// WithFailureDomains adds the given value to the FailureDomains field in the declarative configuration
-// and returns the receiver, so that objects can be build by chaining "With" function invocations.
-// If called multiple times, values provided by each call will be appended to the FailureDomains field.
-func (b *NutanixPlatformSpecApplyConfiguration) WithFailureDomains(values ...*NutanixFailureDomainApplyConfiguration) *NutanixPlatformSpecApplyConfiguration {
-	for i := range values {
-		if values[i] == nil {
-			panic("nil value passed to WithFailureDomains")
-		}
-		b.FailureDomains = append(b.FailureDomains, *values[i])
 	}
 	return b
 }

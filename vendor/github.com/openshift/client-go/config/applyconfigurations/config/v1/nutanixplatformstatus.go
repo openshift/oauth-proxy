@@ -2,7 +2,7 @@
 
 package v1
 
-// NutanixPlatformStatusApplyConfiguration represents a declarative configuration of the NutanixPlatformStatus type for use
+// NutanixPlatformStatusApplyConfiguration represents an declarative configuration of the NutanixPlatformStatus type for use
 // with apply.
 type NutanixPlatformStatusApplyConfiguration struct {
 	APIServerInternalIP  *string                                        `json:"apiServerInternalIP,omitempty"`
@@ -12,7 +12,7 @@ type NutanixPlatformStatusApplyConfiguration struct {
 	LoadBalancer         *NutanixPlatformLoadBalancerApplyConfiguration `json:"loadBalancer,omitempty"`
 }
 
-// NutanixPlatformStatusApplyConfiguration constructs a declarative configuration of the NutanixPlatformStatus type for use with
+// NutanixPlatformStatusApplyConfiguration constructs an declarative configuration of the NutanixPlatformStatus type for use with
 // apply.
 func NutanixPlatformStatus() *NutanixPlatformStatusApplyConfiguration {
 	return &NutanixPlatformStatusApplyConfiguration{}

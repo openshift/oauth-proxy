@@ -24,7 +24,6 @@ import (
 	"fmt"
 	"math"
 	"net/url"
-	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -40,7 +39,6 @@ import (
 	"google.golang.org/grpc/internal/grpcsync"
 	"google.golang.org/grpc/internal/idle"
 	iresolver "google.golang.org/grpc/internal/resolver"
-	"google.golang.org/grpc/internal/stats"
 	"google.golang.org/grpc/internal/transport"
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/resolver"
@@ -196,11 +194,8 @@ func NewClient(target string, opts ...DialOption) (conn *ClientConn, err error) 
 	cc.csMgr = newConnectivityStateManager(cc.ctx, cc.channelz)
 	cc.pickerWrapper = newPickerWrapper(cc.dopts.copts.StatsHandlers)
 
-	cc.metricsRecorderList = stats.NewMetricsRecorderList(cc.dopts.copts.StatsHandlers)
-
 	cc.initIdleStateLocked() // Safe to call without the lock, since nothing else has a reference to cc.
 	cc.idlenessMgr = idle.NewManager((*idler)(cc), cc.dopts.idleTimeout)
-
 	return cc, nil
 }
 
@@ -595,14 +590,13 @@ type ClientConn struct {
 	cancel context.CancelFunc // Cancelled on close.
 
 	// The following are initialized at dial time, and are read-only after that.
-	target              string            // User's dial target.
-	parsedTarget        resolver.Target   // See initParsedTargetAndResolverBuilder().
-	authority           string            // See initAuthority().
-	dopts               dialOptions       // Default and user specified dial options.
-	channelz            *channelz.Channel // Channelz object.
-	resolverBuilder     resolver.Builder  // See initParsedTargetAndResolverBuilder().
-	idlenessMgr         *idle.Manager
-	metricsRecorderList *stats.MetricsRecorderList
+	target          string            // User's dial target.
+	parsedTarget    resolver.Target   // See initParsedTargetAndResolverBuilder().
+	authority       string            // See initAuthority().
+	dopts           dialOptions       // Default and user specified dial options.
+	channelz        *channelz.Channel // Channelz object.
+	resolverBuilder resolver.Builder  // See initParsedTargetAndResolverBuilder().
+	idlenessMgr     *idle.Manager
 
 	// The following provide their own synchronization, and therefore don't
 	// require cc.mu to be held to access them.
@@ -632,6 +626,11 @@ type ClientConn struct {
 
 // WaitForStateChange waits until the connectivity.State of ClientConn changes from sourceState or
 // ctx expires. A true value is returned in former case and false in latter.
+//
+// # Experimental
+//
+// Notice: This API is EXPERIMENTAL and may be changed or removed in a
+// later release.
 func (cc *ClientConn) WaitForStateChange(ctx context.Context, sourceState connectivity.State) bool {
 	ch := cc.csMgr.getNotifyChan()
 	if cc.csMgr.getState() != sourceState {
@@ -646,6 +645,11 @@ func (cc *ClientConn) WaitForStateChange(ctx context.Context, sourceState connec
 }
 
 // GetState returns the connectivity.State of ClientConn.
+//
+// # Experimental
+//
+// Notice: This API is EXPERIMENTAL and may be changed or removed in a later
+// release.
 func (cc *ClientConn) GetState() connectivity.State {
 	return cc.csMgr.getState()
 }
@@ -808,11 +812,17 @@ func (cc *ClientConn) applyFailingLBLocked(sc *serviceconfig.ParseResult) {
 	cc.csMgr.updateState(connectivity.TransientFailure)
 }
 
-// Makes a copy of the input addresses slice. Addresses are passed during
-// subconn creation and address update operations.
-func copyAddresses(in []resolver.Address) []resolver.Address {
+// Makes a copy of the input addresses slice and clears out the balancer
+// attributes field. Addresses are passed during subconn creation and address
+// update operations. In both cases, we will clear the balancer attributes by
+// calling this function, and therefore we will be able to use the Equal method
+// provided by the resolver.Address type for comparison.
+func copyAddressesWithoutBalancerAttributes(in []resolver.Address) []resolver.Address {
 	out := make([]resolver.Address, len(in))
-	copy(out, in)
+	for i := range in {
+		out[i] = in[i]
+		out[i].BalancerAttributes = nil
+	}
 	return out
 }
 
@@ -827,11 +837,12 @@ func (cc *ClientConn) newAddrConnLocked(addrs []resolver.Address, opts balancer.
 	ac := &addrConn{
 		state:        connectivity.Idle,
 		cc:           cc,
-		addrs:        copyAddresses(addrs),
+		addrs:        copyAddressesWithoutBalancerAttributes(addrs),
 		scopts:       opts,
 		dopts:        cc.dopts,
 		channelz:     channelz.RegisterSubChannel(cc.channelz, ""),
 		resetBackoff: make(chan struct{}),
+		stateChan:    make(chan struct{}),
 	}
 	ac.ctx, ac.cancel = context.WithCancel(cc.ctx)
 	// Start with our address set to the first address; this may be updated if
@@ -907,29 +918,28 @@ func (ac *addrConn) connect() error {
 		ac.mu.Unlock()
 		return nil
 	}
+	ac.mu.Unlock()
 
-	ac.resetTransportAndUnlock()
+	ac.resetTransport()
 	return nil
 }
 
-// equalAddressIgnoringBalAttributes returns true is a and b are considered equal.
-// This is different from the Equal method on the resolver.Address type which
-// considers all fields to determine equality. Here, we only consider fields
-// that are meaningful to the subConn.
-func equalAddressIgnoringBalAttributes(a, b *resolver.Address) bool {
-	return a.Addr == b.Addr && a.ServerName == b.ServerName &&
-		a.Attributes.Equal(b.Attributes) &&
-		a.Metadata == b.Metadata
-}
-
-func equalAddressesIgnoringBalAttributes(a, b []resolver.Address) bool {
-	return slices.EqualFunc(a, b, func(a, b resolver.Address) bool { return equalAddressIgnoringBalAttributes(&a, &b) })
+func equalAddresses(a, b []resolver.Address) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i, v := range a {
+		if !v.Equal(b[i]) {
+			return false
+		}
+	}
+	return true
 }
 
 // updateAddrs updates ac.addrs with the new addresses list and handles active
 // connections or connection attempts.
 func (ac *addrConn) updateAddrs(addrs []resolver.Address) {
-	addrs = copyAddresses(addrs)
+	addrs = copyAddressesWithoutBalancerAttributes(addrs)
 	limit := len(addrs)
 	if limit > 5 {
 		limit = 5
@@ -937,7 +947,7 @@ func (ac *addrConn) updateAddrs(addrs []resolver.Address) {
 	channelz.Infof(logger, ac.channelz, "addrConn: updateAddrs addrs (%d of %d): %v", limit, len(addrs), addrs[:limit])
 
 	ac.mu.Lock()
-	if equalAddressesIgnoringBalAttributes(ac.addrs, addrs) {
+	if equalAddresses(ac.addrs, addrs) {
 		ac.mu.Unlock()
 		return
 	}
@@ -956,7 +966,7 @@ func (ac *addrConn) updateAddrs(addrs []resolver.Address) {
 		// Try to find the connected address.
 		for _, a := range addrs {
 			a.ServerName = ac.cc.getServerName(a)
-			if equalAddressIgnoringBalAttributes(&a, &ac.curAddr) {
+			if a.Equal(ac.curAddr) {
 				// We are connected to a valid address, so do nothing but
 				// update the addresses.
 				ac.mu.Unlock()
@@ -982,9 +992,11 @@ func (ac *addrConn) updateAddrs(addrs []resolver.Address) {
 		ac.updateConnectivityState(connectivity.Idle, nil)
 	}
 
+	ac.mu.Unlock()
+
 	// Since we were connecting/connected, we should start a new connection
 	// attempt.
-	go ac.resetTransportAndUnlock()
+	go ac.resetTransport()
 }
 
 // getServerName determines the serverName to be used in the connection
@@ -1140,15 +1152,10 @@ func (cc *ClientConn) Close() error {
 
 	<-cc.resolverWrapper.serializer.Done()
 	<-cc.balancerWrapper.serializer.Done()
-	var wg sync.WaitGroup
+
 	for ac := range conns {
-		wg.Add(1)
-		go func(ac *addrConn) {
-			defer wg.Done()
-			ac.tearDown(ErrClientConnClosing)
-		}(ac)
+		ac.tearDown(ErrClientConnClosing)
 	}
-	wg.Wait()
 	cc.addTraceEvent("deleted")
 	// TraceEvent needs to be called before RemoveEntry, as TraceEvent may add
 	// trace reference to the entity being deleted, and thus prevent it from being
@@ -1183,7 +1190,8 @@ type addrConn struct {
 	addrs   []resolver.Address // All addresses that the resolver resolved to.
 
 	// Use updateConnectivityState for updating addrConn's connectivity state.
-	state connectivity.State
+	state     connectivity.State
+	stateChan chan struct{} // closed and recreated on every state change.
 
 	backoffIdx   int // Needs to be stateful for resetConnectBackoff.
 	resetBackoff chan struct{}
@@ -1196,6 +1204,9 @@ func (ac *addrConn) updateConnectivityState(s connectivity.State, lastErr error)
 	if ac.state == s {
 		return
 	}
+	// When changing states, reset the state change channel.
+	close(ac.stateChan)
+	ac.stateChan = make(chan struct{})
 	ac.state = s
 	ac.channelz.ChannelMetrics.State.Store(&s)
 	if lastErr == nil {
@@ -1203,7 +1214,7 @@ func (ac *addrConn) updateConnectivityState(s connectivity.State, lastErr error)
 	} else {
 		channelz.Infof(logger, ac.channelz, "Subchannel Connectivity change to %v, last error: %s", s, lastErr)
 	}
-	ac.acbw.updateState(s, ac.curAddr, lastErr)
+	ac.acbw.updateState(s, lastErr)
 }
 
 // adjustParams updates parameters used to create transports upon
@@ -1220,10 +1231,8 @@ func (ac *addrConn) adjustParams(r transport.GoAwayReason) {
 	}
 }
 
-// resetTransportAndUnlock unconditionally connects the addrConn.
-//
-// ac.mu must be held by the caller, and this function will guarantee it is released.
-func (ac *addrConn) resetTransportAndUnlock() {
+func (ac *addrConn) resetTransport() {
+	ac.mu.Lock()
 	acCtx := ac.ctx
 	if acCtx.Err() != nil {
 		ac.mu.Unlock()
@@ -1254,8 +1263,6 @@ func (ac *addrConn) resetTransportAndUnlock() {
 	ac.mu.Unlock()
 
 	if err := ac.tryAllAddrs(acCtx, addrs, connectDeadline); err != nil {
-		// TODO: #7534 - Move re-resolution requests into the pick_first LB policy
-		// to ensure one resolution request per pass instead of per subconn failure.
 		ac.cc.resolveNow(resolver.ResolveNowOptions{})
 		ac.mu.Lock()
 		if acCtx.Err() != nil {
@@ -1297,7 +1304,7 @@ func (ac *addrConn) resetTransportAndUnlock() {
 	ac.mu.Unlock()
 }
 
-// tryAllAddrs tries to create a connection to the addresses, and stop when at
+// tryAllAddrs tries to creates a connection to the addresses, and stop when at
 // the first successful one. It returns an error if no address was successfully
 // connected, or updates ac appropriately with the new transport.
 func (ac *addrConn) tryAllAddrs(ctx context.Context, addrs []resolver.Address, connectDeadline time.Time) error {
@@ -1509,6 +1516,29 @@ func (ac *addrConn) getReadyTransport() transport.ClientTransport {
 	return nil
 }
 
+// getTransport waits until the addrconn is ready and returns the transport.
+// If the context expires first, returns an appropriate status.  If the
+// addrConn is stopped first, returns an Unavailable status error.
+func (ac *addrConn) getTransport(ctx context.Context) (transport.ClientTransport, error) {
+	for ctx.Err() == nil {
+		ac.mu.Lock()
+		t, state, sc := ac.transport, ac.state, ac.stateChan
+		ac.mu.Unlock()
+		if state == connectivity.Ready {
+			return t, nil
+		}
+		if state == connectivity.Shutdown {
+			return nil, status.Errorf(codes.Unavailable, "SubConn shutting down")
+		}
+
+		select {
+		case <-ctx.Done():
+		case <-sc:
+		}
+	}
+	return nil, status.FromContextError(ctx.Err()).Err()
+}
+
 // tearDown starts to tear down the addrConn.
 //
 // Note that tearDown doesn't remove ac from ac.cc.conns, so the addrConn struct
@@ -1555,7 +1585,7 @@ func (ac *addrConn) tearDown(err error) {
 		} else {
 			// Hard close the transport when the channel is entering idle or is
 			// being shutdown. In the case where the channel is being shutdown,
-			// closing of transports is also taken care of by cancellation of cc.ctx.
+			// closing of transports is also taken care of by cancelation of cc.ctx.
 			// But in the case where the channel is entering idle, we need to
 			// explicitly close the transports here. Instead of distinguishing
 			// between these two cases, it is simpler to close the transport

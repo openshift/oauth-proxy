@@ -6,13 +6,13 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 )
 
-// CustomTLSProfileApplyConfiguration represents a declarative configuration of the CustomTLSProfile type for use
+// CustomTLSProfileApplyConfiguration represents an declarative configuration of the CustomTLSProfile type for use
 // with apply.
 type CustomTLSProfileApplyConfiguration struct {
 	TLSProfileSpecApplyConfiguration `json:",inline"`
 }
 
-// CustomTLSProfileApplyConfiguration constructs a declarative configuration of the CustomTLSProfile type for use with
+// CustomTLSProfileApplyConfiguration constructs an declarative configuration of the CustomTLSProfile type for use with
 // apply.
 func CustomTLSProfile() *CustomTLSProfileApplyConfiguration {
 	return &CustomTLSProfileApplyConfiguration{}
@@ -23,7 +23,7 @@ func CustomTLSProfile() *CustomTLSProfileApplyConfiguration {
 // If called multiple times, values provided by each call will be appended to the Ciphers field.
 func (b *CustomTLSProfileApplyConfiguration) WithCiphers(values ...string) *CustomTLSProfileApplyConfiguration {
 	for i := range values {
-		b.TLSProfileSpecApplyConfiguration.Ciphers = append(b.TLSProfileSpecApplyConfiguration.Ciphers, values[i])
+		b.Ciphers = append(b.Ciphers, values[i])
 	}
 	return b
 }
@@ -32,6 +32,6 @@ func (b *CustomTLSProfileApplyConfiguration) WithCiphers(values ...string) *Cust
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the MinTLSVersion field is set to the value of the last call.
 func (b *CustomTLSProfileApplyConfiguration) WithMinTLSVersion(value configv1.TLSProtocolVersion) *CustomTLSProfileApplyConfiguration {
-	b.TLSProfileSpecApplyConfiguration.MinTLSVersion = &value
+	b.MinTLSVersion = &value
 	return b
 }

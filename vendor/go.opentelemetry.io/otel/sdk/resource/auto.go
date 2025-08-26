@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // ErrPartialResource is returned by a detector when complete source
@@ -56,37 +57,62 @@ func Detect(ctx context.Context, detectors ...Detector) (*Resource, error) {
 // these errors will be returned. Otherwise, nil is returned.
 func detect(ctx context.Context, res *Resource, detectors []Detector) error {
 	var (
-		r   *Resource
-		err error
-		e   error
+		r    *Resource
+		errs detectErrs
+		err  error
 	)
 
 	for _, detector := range detectors {
 		if detector == nil {
 			continue
 		}
-		r, e = detector.Detect(ctx)
-		if e != nil {
-			err = errors.Join(err, e)
-			if !errors.Is(e, ErrPartialResource) {
+		r, err = detector.Detect(ctx)
+		if err != nil {
+			errs = append(errs, err)
+			if !errors.Is(err, ErrPartialResource) {
 				continue
 			}
 		}
-		r, e = Merge(res, r)
-		if e != nil {
-			err = errors.Join(err, e)
+		r, err = Merge(res, r)
+		if err != nil {
+			errs = append(errs, err)
 		}
 		*res = *r
 	}
 
-	if err != nil {
-		if errors.Is(err, ErrSchemaURLConflict) {
-			// If there has been a merge conflict, ensure the resource has no
-			// schema URL.
-			res.schemaURL = ""
-		}
-
-		err = fmt.Errorf("error detecting resource: %w", err)
+	if len(errs) == 0 {
+		return nil
 	}
-	return err
+	if errors.Is(errs, ErrSchemaURLConflict) {
+		// If there has been a merge conflict, ensure the resource has no
+		// schema URL.
+		res.schemaURL = ""
+	}
+	return errs
+}
+
+type detectErrs []error
+
+func (e detectErrs) Error() string {
+	errStr := make([]string, len(e))
+	for i, err := range e {
+		errStr[i] = fmt.Sprintf("* %s", err)
+	}
+
+	format := "%d errors occurred detecting resource:\n\t%s"
+	return fmt.Sprintf(format, len(e), strings.Join(errStr, "\n\t"))
+}
+
+func (e detectErrs) Unwrap() error {
+	switch len(e) {
+	case 0:
+		return nil
+	case 1:
+		return e[0]
+	}
+	return e[1:]
+}
+
+func (e detectErrs) Is(target error) bool {
+	return len(e) != 0 && errors.Is(e[0], target)
 }

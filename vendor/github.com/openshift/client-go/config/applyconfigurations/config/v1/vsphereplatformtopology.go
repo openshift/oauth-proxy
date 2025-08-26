@@ -2,7 +2,7 @@
 
 package v1
 
-// VSpherePlatformTopologyApplyConfiguration represents a declarative configuration of the VSpherePlatformTopology type for use
+// VSpherePlatformTopologyApplyConfiguration represents an declarative configuration of the VSpherePlatformTopology type for use
 // with apply.
 type VSpherePlatformTopologyApplyConfiguration struct {
 	Datacenter     *string  `json:"datacenter,omitempty"`
@@ -11,10 +11,9 @@ type VSpherePlatformTopologyApplyConfiguration struct {
 	Datastore      *string  `json:"datastore,omitempty"`
 	ResourcePool   *string  `json:"resourcePool,omitempty"`
 	Folder         *string  `json:"folder,omitempty"`
-	Template       *string  `json:"template,omitempty"`
 }
 
-// VSpherePlatformTopologyApplyConfiguration constructs a declarative configuration of the VSpherePlatformTopology type for use with
+// VSpherePlatformTopologyApplyConfiguration constructs an declarative configuration of the VSpherePlatformTopology type for use with
 // apply.
 func VSpherePlatformTopology() *VSpherePlatformTopologyApplyConfiguration {
 	return &VSpherePlatformTopologyApplyConfiguration{}
@@ -67,13 +66,5 @@ func (b *VSpherePlatformTopologyApplyConfiguration) WithResourcePool(value strin
 // If called multiple times, the Folder field is set to the value of the last call.
 func (b *VSpherePlatformTopologyApplyConfiguration) WithFolder(value string) *VSpherePlatformTopologyApplyConfiguration {
 	b.Folder = &value
-	return b
-}
-
-// WithTemplate sets the Template field in the declarative configuration to the given value
-// and returns the receiver, so that objects can be built by chaining "With" function invocations.
-// If called multiple times, the Template field is set to the value of the last call.
-func (b *VSpherePlatformTopologyApplyConfiguration) WithTemplate(value string) *VSpherePlatformTopologyApplyConfiguration {
-	b.Template = &value
 	return b
 }
