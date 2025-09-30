@@ -16,7 +16,7 @@ require (
 	github.com/openshift/library-go v0.0.0-20230724150037-c515269de16e
 	github.com/stretchr/testify v1.9.0
 	github.com/yhat/wsutil v0.0.0-20170731153501-1d66fa95c997
-	golang.org/x/crypto v0.24.0
+	golang.org/x/crypto v0.31.0
 	golang.org/x/net v0.26.0
 	k8s.io/api v0.31.1
 	k8s.io/apimachinery v0.31.1
@@ -90,10 +90,10 @@ require (
 	go.uber.org/zap v1.26.0 // indirect
 	golang.org/x/exp v0.0.0-20230515195305-f3d0a9c9a5cc // indirect
 	golang.org/x/oauth2 v0.21.0 // indirect
-	golang.org/x/sync v0.7.0 // indirect
-	golang.org/x/sys v0.21.0 // indirect
-	golang.org/x/term v0.21.0 // indirect
-	golang.org/x/text v0.16.0 // indirect
+	golang.org/x/sync v0.10.0 // indirect
+	golang.org/x/sys v0.28.0 // indirect
+	golang.org/x/term v0.27.0 // indirect
+	golang.org/x/text v0.21.0 // indirect
 	golang.org/x/time v0.3.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20240528184218-531527333157 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240701130421-f6361c86f094 // indirect
