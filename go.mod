@@ -1,8 +1,6 @@
 module github.com/openshift/oauth-proxy
 
-go 1.24.0
-
-toolchain go1.24.2
+go 1.25.0
 
 require (
 	github.com/18F/hmacauth v0.0.0-20151013130326-9232a6386b73
@@ -18,8 +16,8 @@ require (
 	github.com/openshift/library-go v0.0.0-20250818065802-cf8518058622
 	github.com/stretchr/testify v1.10.0
 	github.com/yhat/wsutil v0.0.0-20170731153501-1d66fa95c997
-	golang.org/x/crypto v0.36.0
-	golang.org/x/net v0.38.0
+	golang.org/x/crypto v0.52.0
+	golang.org/x/net v0.55.0
 	k8s.io/api v0.33.3
 	k8s.io/apimachinery v0.33.3
 	k8s.io/apiserver v0.33.3
@@ -92,10 +90,10 @@ require (
 	go.uber.org/zap v1.27.0 // indirect
 	golang.org/x/exp v0.0.0-20240719175910-8a7402abbf56 // indirect
 	golang.org/x/oauth2 v0.27.0 // indirect
-	golang.org/x/sync v0.12.0 // indirect
-	golang.org/x/sys v0.31.0 // indirect
-	golang.org/x/term v0.30.0 // indirect
-	golang.org/x/text v0.23.0 // indirect
+	golang.org/x/sync v0.20.0 // indirect
+	golang.org/x/sys v0.45.0 // indirect
+	golang.org/x/term v0.43.0 // indirect
+	golang.org/x/text v0.37.0 // indirect
 	golang.org/x/time v0.9.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20241209162323-e6fa225c2576 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20241209162323-e6fa225c2576 // indirect
