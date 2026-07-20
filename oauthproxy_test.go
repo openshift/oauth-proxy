@@ -17,6 +17,7 @@ import (
 
 	"github.com/18F/hmacauth"
 	"github.com/bmizerany/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/openshift/oauth-proxy/providers"
 	"golang.org/x/net/websocket"
