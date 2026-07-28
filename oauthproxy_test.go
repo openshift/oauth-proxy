@@ -17,6 +17,7 @@ import (
 
 	"github.com/18F/hmacauth"
 	"github.com/bmizerany/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/openshift/oauth-proxy/providers"
 	"golang.org/x/net/websocket"
@@ -289,11 +290,25 @@ func TestBasicAuthPassword(t *testing.T) {
 	})
 	req.AddCookie(proxy.MakeCSRFCookie(req, "nonce", proxy.CookieExpire, time.Now()))
 
+	// Add header variants with underscores to verify normalization
+	req.Header.Set("X-Forwarded_User", "variant_user")
+	req.Header.Set("X-Forwarded_Email", "variant@example.com")
+
 	rw = httptest.NewRecorder()
 	proxy.ServeHTTP(rw, req)
 
 	expectedHeader := "Basic " + base64.StdEncoding.EncodeToString([]byte(user_name+":"+opts.BasicAuthPassword))
 	assert.Equal(t, expectedHeader, rw.Body.String())
+
+	// Verify underscore variants were normalized and replaced with authenticated values
+	assert.Equal(t, user_name, req.Header.Get("X-Forwarded-User"))
+	assert.Equal(t, email_address, req.Header.Get("X-Forwarded-Email"))
+	// Verify no underscore variants remain after normalization
+	_, hasUnderscore := req.Header["X-Forwarded_User"]
+	assert.Equal(t, false, hasUnderscore)
+	_, hasUnderscore = req.Header["X-Forwarded_Email"]
+	assert.Equal(t, false, hasUnderscore)
+
 	provider_server.Close()
 }
 
@@ -893,4 +908,225 @@ func TestRequestSignaturePostRequest(t *testing.T) {
 	st.MakeRequestWithExpectedKey("POST", payload, "foobar")
 	assert.Equal(t, 200, st.rw.Code)
 	assert.Equal(t, st.rw.Body.String(), "signatures match")
+}
+
+func Test_normalizeHeaderName(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "lowercase with hyphens",
+			input:    "x-forwarded-user",
+			expected: "x-forwarded-user",
+		},
+		{
+			name:     "uppercase with hyphens",
+			input:    "X-Forwarded-User",
+			expected: "x-forwarded-user",
+		},
+		{
+			name:     "mixed case with hyphens",
+			input:    "X-FoRwArDeD-UsEr",
+			expected: "x-forwarded-user",
+		},
+		{
+			name:     "underscores instead of hyphens",
+			input:    "X_Forwarded_User",
+			expected: "x-forwarded-user",
+		},
+		{
+			name:     "mixed underscores and hyphens",
+			input:    "X-Forwarded_User",
+			expected: "x-forwarded-user",
+		},
+		{
+			name:     "all uppercase with underscores",
+			input:    "X_FORWARDED_USER",
+			expected: "x-forwarded-user",
+		},
+		{
+			name:     "all lowercase with underscores",
+			input:    "x_forwarded_user",
+			expected: "x-forwarded-user",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := normalizeHeaderName(tt.input)
+			require.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func Test_setRequestHeader(t *testing.T) {
+	tests := []struct {
+		name            string
+		headerName      string
+		headerValue     string
+		initialHeaders  http.Header
+		expectedHeaders http.Header
+	}{
+		{
+			name:        "set header on empty request",
+			headerName:  "X-Forwarded-User",
+			headerValue: "alice",
+			initialHeaders: http.Header{
+				"Content-Type": {"application/json"},
+			},
+			expectedHeaders: http.Header{
+				"Content-Type":     {"application/json"},
+				"X-Forwarded-User": {"alice"},
+			},
+		},
+		{
+			name:        "override existing header",
+			headerName:  "X-Forwarded-User",
+			headerValue: "alice",
+			initialHeaders: http.Header{
+				"X-Forwarded-User": {"bob"},
+				"Content-Type":     {"application/json"},
+			},
+			expectedHeaders: http.Header{
+				"Content-Type":     {"application/json"},
+				"X-Forwarded-User": {"alice"},
+			},
+		},
+		{
+			name:        "strip underscore variant before setting",
+			headerName:  "X-Forwarded-User",
+			headerValue: "alice",
+			initialHeaders: http.Header{
+				"X-Forwarded_User": {"bob"},
+				"Content-Type":     {"application/json"},
+			},
+			expectedHeaders: http.Header{
+				"Content-Type":     {"application/json"},
+				"X-Forwarded-User": {"alice"},
+			},
+		},
+		{
+			name:        "strip all variants before setting",
+			headerName:  "X-Forwarded-User",
+			headerValue: "alice",
+			initialHeaders: http.Header{
+				"X-Forwarded-User": {"bob"},
+				"X-Forwarded_User": {"charlie"},
+				"x-forwarded-user": {"dave"},
+				"Content-Type":     {"application/json"},
+			},
+			expectedHeaders: http.Header{
+				"Content-Type":     {"application/json"},
+				"X-Forwarded-User": {"alice"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", "/test", nil)
+			req.Header = tt.initialHeaders
+
+			setRequestHeader(req, tt.headerName, tt.headerValue)
+
+			require.Equal(t, tt.expectedHeaders, req.Header)
+		})
+	}
+}
+
+func Test_stripNormalizedHeader(t *testing.T) {
+	tests := []struct {
+		name            string
+		headerToStrip   string
+		initialHeaders  http.Header
+		expectedHeaders http.Header
+	}{
+		{
+			name:          "strip exact match",
+			headerToStrip: "X-Forwarded-User",
+			initialHeaders: http.Header{
+				"X-Forwarded-User": {"user1"},
+				"Content-Type":     {"application/json"},
+			},
+			expectedHeaders: http.Header{
+				"Content-Type": {"application/json"},
+			},
+		},
+		{
+			name:          "strip underscore variant",
+			headerToStrip: "X-Forwarded-User",
+			initialHeaders: http.Header{
+				"X-Forwarded_User": {"user2"},
+				"Content-Type":     {"application/json"},
+			},
+			expectedHeaders: http.Header{
+				"Content-Type": {"application/json"},
+			},
+		},
+		{
+			name:          "strip mixed case variant",
+			headerToStrip: "X-Forwarded-User",
+			initialHeaders: http.Header{
+				"x-forwarded-user": {"user3"},
+				"Content-Type":     {"application/json"},
+			},
+			expectedHeaders: http.Header{
+				"Content-Type": {"application/json"},
+			},
+		},
+		{
+			name:          "strip all variants",
+			headerToStrip: "X-Forwarded-User",
+			initialHeaders: http.Header{
+				"X-Forwarded-User": {"user1"},
+				"X-Forwarded_User": {"user2"},
+				"x-forwarded-user": {"user3"},
+				"X_FORWARDED_USER": {"user4"},
+				"Content-Type":     {"application/json"},
+			},
+			expectedHeaders: http.Header{
+				"Content-Type": {"application/json"},
+			},
+		},
+		{
+			name:          "preserve other headers",
+			headerToStrip: "X-Forwarded-User",
+			initialHeaders: http.Header{
+				"X-Forwarded-User":  {"user1"},
+				"X-Forwarded-Email": {"user@example.com"},
+				"Authorization":     {"Bearer token"},
+				"Content-Type":      {"application/json"},
+			},
+			expectedHeaders: http.Header{
+				"X-Forwarded-Email": {"user@example.com"},
+				"Authorization":     {"Bearer token"},
+				"Content-Type":      {"application/json"},
+			},
+		},
+		{
+			name:          "no matching headers to strip",
+			headerToStrip: "X-Forwarded-User",
+			initialHeaders: http.Header{
+				"Content-Type":  {"application/json"},
+				"Authorization": {"Bearer token"},
+			},
+			expectedHeaders: http.Header{
+				"Content-Type":  {"application/json"},
+				"Authorization": {"Bearer token"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", "/test", nil)
+			req.Header = tt.initialHeaders
+
+			stripNormalizedHeader(req, tt.headerToStrip)
+
+			require.Equal(t, tt.expectedHeaders, req.Header)
+		})
+	}
 }
