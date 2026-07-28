@@ -675,6 +675,11 @@ func newOAuthProxyPod(proxyImage, backendImage string, extraProxyArgs []string, 
 			},
 		},
 		Spec: corev1.PodSpec{
+			SecurityContext: &corev1.PodSecurityContext{
+				RunAsNonRoot:   boolPtr(true),
+				RunAsUser:      int64Ptr(1000),
+				SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
+			},
 			Volumes: []corev1.Volume{
 				{
 					Name: "proxy-cert-volume",
@@ -692,6 +697,10 @@ func newOAuthProxyPod(proxyImage, backendImage string, extraProxyArgs []string, 
 					ImagePullPolicy: corev1.PullIfNotPresent,
 					Name:            "oauth-proxy",
 					Args:            proxyArgs,
+					SecurityContext: &corev1.SecurityContext{
+						AllowPrivilegeEscalation: boolPtr(false),
+						Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+					},
 					Ports: []corev1.ContainerPort{
 						{
 							ContainerPort: 8443,
@@ -707,6 +716,10 @@ func newOAuthProxyPod(proxyImage, backendImage string, extraProxyArgs []string, 
 				{
 					Image: backendImage,
 					Name:  "hello-openshift",
+					SecurityContext: &corev1.SecurityContext{
+						AllowPrivilegeEscalation: boolPtr(false),
+						Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+					},
 					Ports: []corev1.ContainerPort{
 						{
 							ContainerPort: 8080,
@@ -770,3 +783,6 @@ func WaitForClusterOperatorStatus(t *testing.T, client configv1client.ConfigV1In
 		return done, nil
 	})
 }
+
+func boolPtr(b bool) *bool    { return &b }
+func int64Ptr(i int64) *int64 { return &i }
