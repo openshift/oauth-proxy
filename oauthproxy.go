@@ -800,15 +800,15 @@ func (p *OAuthProxy) Authenticate(rw http.ResponseWriter, req *http.Request) int
 	// At this point, the user is authenticated. proxy normally
 	if p.PassBasicAuth {
 		req.SetBasicAuth(session.User, p.BasicAuthPassword)
-		req.Header["X-Forwarded-User"] = []string{session.User}
+		setRequestHeader(req, "X-Forwarded-User", session.User)
 		if session.Email != "" {
-			req.Header["X-Forwarded-Email"] = []string{session.Email}
+			setRequestHeader(req, "X-Forwarded-Email", session.Email)
 		}
 	}
 	if p.PassUserHeaders {
-		req.Header["X-Forwarded-User"] = []string{session.User}
+		setRequestHeader(req, "X-Forwarded-User", session.User)
 		if session.Email != "" {
-			req.Header["X-Forwarded-Email"] = []string{session.Email}
+			setRequestHeader(req, "X-Forwarded-Email", session.Email)
 		}
 	}
 	if p.SetXAuthRequest {
@@ -818,7 +818,7 @@ func (p *OAuthProxy) Authenticate(rw http.ResponseWriter, req *http.Request) int
 		}
 	}
 	if ((!tokenProvidedByClient && p.PassAccessToken) || (tokenProvidedByClient && p.PassUserBearerToken)) && session.AccessToken != "" {
-		req.Header["X-Forwarded-Access-Token"] = []string{session.AccessToken}
+		setRequestHeader(req, "X-Forwarded-Access-Token", session.AccessToken)
 	}
 	if session.Email == "" {
 		rw.Header().Set("GAP-Auth", session.User)
@@ -879,4 +879,37 @@ func parseSameSite(v string) http.SameSite {
 	default:
 		panic(fmt.Sprintf("Invalid value for SameSite: %s", v))
 	}
+}
+
+// normalizeHeaderName normalizes the header name by lowercasing it
+// and replacing underscores with hyphens.
+func normalizeHeaderName(headerName string) string {
+	headerName = strings.ToLower(headerName)
+	headerName = strings.ReplaceAll(headerName, "_", "-")
+	return headerName
+}
+
+// stripNormalizedHeader removes any headers from the request that match
+// the normalized version of the provided header's name.
+func stripNormalizedHeader(req *http.Request, headerName string) {
+	normalizedName := normalizeHeaderName(headerName)
+	toBeDeleted := []string{}
+	for h := range req.Header {
+		if normalizeHeaderName(h) == normalizedName {
+			toBeDeleted = append(toBeDeleted, h)
+		}
+	}
+	for _, h := range toBeDeleted {
+		delete(req.Header, h)
+	}
+}
+
+// setRequestHeader strips all normalized variants of a header name from the request
+// and then sets the header to the provided value.
+func setRequestHeader(req *http.Request, headerName string, value string) {
+	stripNormalizedHeader(req, headerName)
+	if req.Header == nil {
+		req.Header = http.Header{}
+	}
+	req.Header[headerName] = []string{value}
 }
