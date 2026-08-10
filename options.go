@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/18F/hmacauth"
+	k8sapiflag "k8s.io/component-base/cli/flag"
 
 	oscrypto "github.com/openshift/library-go/pkg/crypto"
 
@@ -40,6 +42,8 @@ type Options struct {
 	TLSCertFile      string        `flag:"tls-cert" cfg:"tls_cert_file"`
 	TLSKeyFile       string        `flag:"tls-key" cfg:"tls_key_file"`
 	TLSClientCAFile  string        `flag:"tls-client-ca" cfg:"tls_client_ca"`
+	TLSMinVersion    string        `flag:"tls-min-version" cfg:"tls_min_version"`
+	TLSCipherSuites  []string      `cfg:"tls_cipher_suites"` // No flag tag - manually parsed after Resolve()
 
 	AuthenticatedEmailsFile string   `flag:"authenticated-emails-file" cfg:"authenticated_emails_file"`
 	EmailDomains            []string `flag:"email-domain" cfg:"email_domains"`
@@ -324,6 +328,43 @@ func (o *Options) Validate(p providers.Provider) error {
 			TLSClientConfig: oscrypto.SecureTLSConfig(&tls.Config{InsecureSkipVerify: true}), // eh
 		}
 		http.DefaultClient = &http.Client{Transport: insecureTransport}
+	}
+
+	// Validate TLS configuration early
+	if o.TLSMinVersion != "" || len(o.TLSCipherSuites) > 0 {
+		// Warn if TLS flags are set but HTTPS is disabled
+		if o.HttpsAddress == "" {
+			log.Printf("WARNING: TLS flags (tls-min-version, tls-cipher-suites) are set but HTTPS is disabled (--https-address=\"\")")
+		}
+
+		// Validate TLS minimum version
+		if o.TLSMinVersion != "" {
+			minVersion, err := oscrypto.TLSVersion(o.TLSMinVersion)
+			if err != nil {
+				msgs = append(msgs, fmt.Sprintf("invalid tls-min-version: %v", err))
+			} else if minVersion != 0 && minVersion < tls.VersionTLS12 {
+				msgs = append(msgs, fmt.Sprintf("tls-min-version must be VersionTLS12 or VersionTLS13, got: %s (TLS 1.0 and 1.1 are insecure and not supported)", o.TLSMinVersion))
+			}
+		}
+
+		// Validate TLS cipher suites
+		if len(o.TLSCipherSuites) > 0 {
+			insecureCiphers := k8sapiflag.InsecureTLSCiphers()
+
+			for _, cipherName := range o.TLSCipherSuites {
+				// Validate cipher name exists (library-go)
+				_, err := oscrypto.CipherSuite(cipherName)
+				if err != nil {
+					msgs = append(msgs, fmt.Sprintf("invalid cipher suite %q: %v", cipherName, err))
+					continue
+				}
+
+				// Reject insecure cipher suites (RC4, 3DES, CBC with SHA1, etc.)
+				if _, isInsecure := insecureCiphers[cipherName]; isInsecure {
+					msgs = append(msgs, fmt.Sprintf("insecure cipher suite %q is not allowed (vulnerable to known attacks)", cipherName))
+				}
+			}
+		}
 	}
 
 	msgs = append(msgs, o.validateProvider(p)...)

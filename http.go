@@ -72,13 +72,47 @@ func (s *Server) ServeHTTP() {
 	log.Printf("HTTP: closing %s", listener.Addr())
 }
 
-func (s *Server) ServeHTTPS(ctx context.Context) {
-	addr := s.Opts.HttpsAddress
-
+// buildTLSConfig constructs a TLS configuration from Options.
+// It starts with library-go secure defaults and applies user overrides.
+func (s *Server) buildTLSConfig() *tls.Config {
+	// Start with secure defaults from library-go
 	config := oscrypto.SecureTLSConfig(&tls.Config{})
 	if config.NextProtos == nil {
 		config.NextProtos = []string{"http/1.1"}
 	}
+
+	// Override with user-specified TLS settings if provided
+	// Note: validation happens in Options.Validate(), but we log warnings defensively
+	if s.Opts.TLSMinVersion != "" {
+		minVersion, err := oscrypto.TLSVersion(s.Opts.TLSMinVersion)
+		if err != nil {
+			log.Printf("WARNING: invalid tls-min-version %q: %v", s.Opts.TLSMinVersion, err)
+		} else if minVersion != 0 {
+			config.MinVersion = minVersion
+		}
+	}
+
+	if len(s.Opts.TLSCipherSuites) > 0 {
+		cipherSuites := make([]uint16, 0, len(s.Opts.TLSCipherSuites))
+		for _, cipherName := range s.Opts.TLSCipherSuites {
+			cipher, err := oscrypto.CipherSuite(cipherName)
+			if err != nil {
+				log.Printf("WARNING: invalid cipher suite %q: %v", cipherName, err)
+				continue
+			}
+			cipherSuites = append(cipherSuites, cipher)
+		}
+		if len(cipherSuites) > 0 {
+			config.CipherSuites = cipherSuites
+		}
+	}
+
+	return config
+}
+
+func (s *Server) ServeHTTPS(ctx context.Context) {
+	addr := s.Opts.HttpsAddress
+	config := s.buildTLSConfig()
 
 	var err error
 	servingCertProvider, err := dynamiccertificates.NewDynamicServingContentFromFiles("serving", s.Opts.TLSCertFile, s.Opts.TLSKeyFile)
