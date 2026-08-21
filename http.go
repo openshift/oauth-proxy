@@ -11,8 +11,6 @@ import (
 
 	"k8s.io/apiserver/pkg/server/dynamiccertificates"
 
-	oscrypto "github.com/openshift/library-go/pkg/crypto"
-
 	"github.com/openshift/oauth-proxy/util"
 )
 
@@ -72,43 +70,50 @@ func (s *Server) ServeHTTP() {
 	log.Printf("HTTP: closing %s", listener.Addr())
 }
 
-// buildTLSConfig constructs a TLS configuration from Options.
-// It starts with library-go secure defaults and applies user overrides.
 func (s *Server) buildTLSConfig() *tls.Config {
-	// Start with secure defaults from library-go
-	config := oscrypto.SecureTLSConfig(&tls.Config{})
-	if config.NextProtos == nil {
-		config.NextProtos = []string{"http/1.1"}
+	config := &tls.Config{
+		MinVersion: tls.VersionTLS13,
+		NextProtos: []string{"http/1.1"},
 	}
 
-	// Override with user-specified TLS settings if provided
-	// Note: validation happens in Options.Validate(), but we log warnings defensively
 	if s.Opts.TLSMinVersion != "" {
-		minVersion, err := oscrypto.TLSVersion(s.Opts.TLSMinVersion)
-		if err != nil {
-			log.Printf("WARNING: invalid tls-min-version %q: %v", s.Opts.TLSMinVersion, err)
-		} else if minVersion != 0 {
-			config.MinVersion = minVersion
+		if v, ok := tlsVersionMap[s.Opts.TLSMinVersion]; ok {
+			config.MinVersion = v
 		}
 	}
 
 	if len(s.Opts.TLSCipherSuites) > 0 {
-		cipherSuites := make([]uint16, 0, len(s.Opts.TLSCipherSuites))
-		for _, cipherName := range s.Opts.TLSCipherSuites {
-			cipher, err := oscrypto.CipherSuite(cipherName)
-			if err != nil {
-				log.Printf("WARNING: invalid cipher suite %q: %v", cipherName, err)
-				continue
+		suites := make([]uint16, 0, len(s.Opts.TLSCipherSuites))
+		for _, name := range s.Opts.TLSCipherSuites {
+			if id, ok := tlsCipherSuiteMap[name]; ok {
+				suites = append(suites, id)
 			}
-			cipherSuites = append(cipherSuites, cipher)
 		}
-		if len(cipherSuites) > 0 {
-			config.CipherSuites = cipherSuites
+		if len(suites) > 0 {
+			config.CipherSuites = suites
 		}
 	}
 
 	return config
 }
+
+var tlsVersionMap = map[string]uint16{
+	"VersionTLS10": tls.VersionTLS10,
+	"VersionTLS11": tls.VersionTLS11,
+	"VersionTLS12": tls.VersionTLS12,
+	"VersionTLS13": tls.VersionTLS13,
+}
+
+var tlsCipherSuiteMap = func() map[string]uint16 {
+	m := make(map[string]uint16)
+	for _, cs := range tls.CipherSuites() {
+		m[cs.Name] = cs.ID
+	}
+	for _, cs := range tls.InsecureCipherSuites() {
+		m[cs.Name] = cs.ID
+	}
+	return m
+}()
 
 func (s *Server) ServeHTTPS(ctx context.Context) {
 	addr := s.Opts.HttpsAddress
