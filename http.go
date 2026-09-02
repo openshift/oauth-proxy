@@ -72,48 +72,16 @@ func (s *Server) ServeHTTP() {
 
 func (s *Server) buildTLSConfig() *tls.Config {
 	config := &tls.Config{
-		MinVersion: tls.VersionTLS13,
+		MinVersion: s.Opts.tlsMinVersionValue,
 		NextProtos: []string{"http/1.1"},
 	}
 
-	if s.Opts.TLSMinVersion != "" {
-		if v, ok := tlsVersionMap[s.Opts.TLSMinVersion]; ok {
-			config.MinVersion = v
-		}
-	}
-
-	if len(s.Opts.TLSCipherSuites) > 0 {
-		suites := make([]uint16, 0, len(s.Opts.TLSCipherSuites))
-		for _, name := range s.Opts.TLSCipherSuites {
-			if id, ok := tlsCipherSuiteMap[name]; ok {
-				suites = append(suites, id)
-			}
-		}
-		if len(suites) > 0 {
-			config.CipherSuites = suites
-		}
+	if len(s.Opts.tlsCipherSuiteIDs) > 0 {
+		config.CipherSuites = s.Opts.tlsCipherSuiteIDs
 	}
 
 	return config
 }
-
-var tlsVersionMap = map[string]uint16{
-	"VersionTLS10": tls.VersionTLS10,
-	"VersionTLS11": tls.VersionTLS11,
-	"VersionTLS12": tls.VersionTLS12,
-	"VersionTLS13": tls.VersionTLS13,
-}
-
-var tlsCipherSuiteMap = func() map[string]uint16 {
-	m := make(map[string]uint16)
-	for _, cs := range tls.CipherSuites() {
-		m[cs.Name] = cs.ID
-	}
-	for _, cs := range tls.InsecureCipherSuites() {
-		m[cs.Name] = cs.ID
-	}
-	return m
-}()
 
 func (s *Server) ServeHTTPS(ctx context.Context) {
 	addr := s.Opts.HttpsAddress
