@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -113,12 +114,14 @@ type Options struct {
 	Timeout time.Duration `flag:"upstream-timeout" cfg:"upstream_timeout"`
 
 	// internal values that are set after config validation
-	redirectURL       *url.URL
-	proxyURLs         []*url.URL
-	CompiledAuthRegex []*regexp.Regexp
-	CompiledSkipRegex []*regexp.Regexp
-	provider          providers.Provider
-	signatureData     *SignatureData
+	redirectURL        *url.URL
+	proxyURLs          []*url.URL
+	CompiledAuthRegex  []*regexp.Regexp
+	CompiledSkipRegex  []*regexp.Regexp
+	provider           providers.Provider
+	signatureData      *SignatureData
+	tlsMinVersionValue uint16
+	tlsCipherSuiteIDs  []uint16
 }
 
 type SignatureData struct {
@@ -312,6 +315,30 @@ func (o *Options) Validate(p providers.Provider) error {
 		msgs = append(msgs, "tls-client-ca requires tls-key-file or tls-cert-file to be set to listen on tls")
 	}
 
+	o.tlsMinVersionValue = tls.VersionTLS13
+	if o.TLSMinVersion != "" {
+		if v, ok := tlsVersionMap[o.TLSMinVersion]; ok {
+			o.tlsMinVersionValue = v
+		} else {
+			msgs = append(msgs, fmt.Sprintf("unrecognized tls-min-version %q; valid values: %s", o.TLSMinVersion, validTLSVersions()))
+		}
+	}
+
+	if len(o.TLSCipherSuites) > 0 {
+		var unrecognized []string
+		o.tlsCipherSuiteIDs = make([]uint16, 0, len(o.TLSCipherSuites))
+		for _, name := range o.TLSCipherSuites {
+			if id, ok := tlsCipherSuiteMap[name]; ok {
+				o.tlsCipherSuiteIDs = append(o.tlsCipherSuiteIDs, id)
+			} else {
+				unrecognized = append(unrecognized, name)
+			}
+		}
+		if len(unrecognized) > 0 {
+			msgs = append(msgs, fmt.Sprintf("unrecognized tls-cipher-suites: %s", strings.Join(unrecognized, ", ")))
+		}
+	}
+
 	switch o.CookieSameSite {
 	case "", "none", "lax", "strict":
 	default:
@@ -428,4 +455,31 @@ func secretBytes(secret string) []byte {
 		return []byte(addPadding(string(b)))
 	}
 	return []byte(secret)
+}
+
+var tlsVersionMap = map[string]uint16{
+	"VersionTLS10": tls.VersionTLS10,
+	"VersionTLS11": tls.VersionTLS11,
+	"VersionTLS12": tls.VersionTLS12,
+	"VersionTLS13": tls.VersionTLS13,
+}
+
+var tlsCipherSuiteMap = func() map[string]uint16 {
+	m := make(map[string]uint16)
+	for _, cs := range tls.CipherSuites() {
+		m[cs.Name] = cs.ID
+	}
+	for _, cs := range tls.InsecureCipherSuites() {
+		m[cs.Name] = cs.ID
+	}
+	return m
+}()
+
+func validTLSVersions() string {
+	versions := make([]string, 0, len(tlsVersionMap))
+	for k := range tlsVersionMap {
+		versions = append(versions, k)
+	}
+	sort.Strings(versions)
+	return strings.Join(versions, ", ")
 }

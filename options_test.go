@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto"
+	"crypto/tls"
 	"fmt"
 	"net/url"
 	"strings"
@@ -228,4 +229,41 @@ func TestValidateCookieSameSite(t *testing.T) {
 			assert.Equal(t, nil, o.Validate(&testProvider{}))
 		})
 	}
+}
+
+func TestValidateTLSMinVersionDefault(t *testing.T) {
+	o := testOptions()
+	assert.Equal(t, nil, o.Validate(&testProvider{}))
+	assert.Equal(t, uint16(tls.VersionTLS13), o.tlsMinVersionValue)
+}
+
+func TestValidateTLSMinVersion(t *testing.T) {
+	o := testOptions()
+	o.TLSMinVersion = "VersionTLS12"
+	assert.Equal(t, nil, o.Validate(&testProvider{}))
+	assert.Equal(t, uint16(tls.VersionTLS12), o.tlsMinVersionValue)
+}
+
+func TestValidateTLSMinVersionInvalid(t *testing.T) {
+	o := testOptions()
+	o.TLSMinVersion = "VersionTLS99"
+	err := o.Validate(&testProvider{})
+	assert.NotEqual(t, nil, err)
+	assert.Equal(t, true, strings.Contains(err.Error(), "unrecognized tls-min-version"))
+}
+
+func TestValidateTLSCipherSuites(t *testing.T) {
+	o := testOptions()
+	o.TLSCipherSuites = []string{"TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"}
+	assert.Equal(t, nil, o.Validate(&testProvider{}))
+	assert.Equal(t, 1, len(o.tlsCipherSuiteIDs))
+	assert.Equal(t, uint16(tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256), o.tlsCipherSuiteIDs[0])
+}
+
+func TestValidateTLSCipherSuitesInvalid(t *testing.T) {
+	o := testOptions()
+	o.TLSCipherSuites = []string{"TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256", "BOGUS_CIPHER"}
+	err := o.Validate(&testProvider{})
+	assert.NotEqual(t, nil, err)
+	assert.Equal(t, true, strings.Contains(err.Error(), "BOGUS_CIPHER"))
 }
