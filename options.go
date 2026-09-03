@@ -458,8 +458,6 @@ func secretBytes(secret string) []byte {
 }
 
 var tlsVersionMap = map[string]uint16{
-	"VersionTLS10": tls.VersionTLS10,
-	"VersionTLS11": tls.VersionTLS11,
 	"VersionTLS12": tls.VersionTLS12,
 	"VersionTLS13": tls.VersionTLS13,
 }
@@ -467,9 +465,6 @@ var tlsVersionMap = map[string]uint16{
 var tlsCipherSuiteMap = func() map[string]uint16 {
 	m := make(map[string]uint16)
 	for _, cs := range tls.CipherSuites() {
-		m[cs.Name] = cs.ID
-	}
-	for _, cs := range tls.InsecureCipherSuites() {
 		m[cs.Name] = cs.ID
 	}
 	return m
