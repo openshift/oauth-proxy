@@ -25,7 +25,6 @@ import (
 
 func init() {
 	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
-
 }
 
 type WebSocketOrRestHandler struct {
@@ -87,7 +86,7 @@ func TestWebSocketProxy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err %s", err)
 	}
-	var response = make([]byte, 1024)
+	response := make([]byte, 1024)
 	websocket.Message.Receive(ws, &response)
 	if err != nil {
 		t.Fatalf("err %s", err)
@@ -416,7 +415,8 @@ func (pat_test *PassAccessTokenTest) Close() {
 }
 
 func (pat_test *PassAccessTokenTest) getCallbackEndpoint() (http_code int,
-	cookie string) {
+	cookie string,
+) {
 	rw := httptest.NewRecorder()
 	req, err := http.NewRequest("GET", "/oauth2/callback?code=callback_code&state=nonce:",
 		strings.NewReader(""))
@@ -714,7 +714,8 @@ func NewAuthOnlyEndpointTest() *ProcessCookieTest {
 func TestAuthOnlyEndpointAccepted(t *testing.T) {
 	test := NewAuthOnlyEndpointTest()
 	startSession := &providers.SessionState{
-		Email: "michael.bland@gsa.gov", AccessToken: "my_access_token"}
+		Email: "michael.bland@gsa.gov", AccessToken: "my_access_token",
+	}
 	test.SaveSession(startSession, time.Now())
 
 	test.proxy.ServeHTTP(test.rw, test.req)
@@ -737,7 +738,8 @@ func TestAuthOnlyEndpointUnauthorizedOnExpiration(t *testing.T) {
 	test.proxy.CookieExpire = time.Duration(24) * time.Hour
 	reference := time.Now().Add(time.Duration(25) * time.Hour * -1)
 	startSession := &providers.SessionState{
-		Email: "michael.bland@gsa.gov", AccessToken: "my_access_token"}
+		Email: "michael.bland@gsa.gov", AccessToken: "my_access_token",
+	}
 	test.SaveSession(startSession, reference)
 
 	test.proxy.ServeHTTP(test.rw, test.req)
@@ -749,7 +751,8 @@ func TestAuthOnlyEndpointUnauthorizedOnExpiration(t *testing.T) {
 func TestAuthOnlyEndpointUnauthorizedOnEmailValidationFailure(t *testing.T) {
 	test := NewAuthOnlyEndpointTest()
 	startSession := &providers.SessionState{
-		Email: "michael.bland@gsa.gov", AccessToken: "my_access_token"}
+		Email: "michael.bland@gsa.gov", AccessToken: "my_access_token",
+	}
 	test.SaveSession(startSession, time.Now())
 	test.validate_user = false
 
@@ -779,7 +782,8 @@ func TestAuthOnlyEndpointSetXAuthRequestHeaders(t *testing.T) {
 		pc_test.opts.ProxyPrefix+"/auth", nil)
 
 	startSession := &providers.SessionState{
-		User: "oauth_user", Email: "oauth_user@example.com", AccessToken: "oauth_token"}
+		User: "oauth_user", Email: "oauth_user@example.com", AccessToken: "oauth_token",
+	}
 	pc_test.SaveSession(startSession, time.Now())
 
 	pc_test.proxy.ServeHTTP(pc_test.rw, pc_test.req)
@@ -915,7 +919,8 @@ func (st *SignatureTest) MakeRequestWithExpectedKey(method, body, key string) {
 	req.Header = st.header
 
 	state := &providers.SessionState{
-		Email: "mbland@acm.org", AccessToken: "my_access_token"}
+		Email: "mbland@acm.org", AccessToken: "my_access_token",
+	}
 	value, err := proxy.provider.CookieForSession(state, proxy.CookieCipher)
 	if err != nil {
 		panic(err)
@@ -1172,6 +1177,144 @@ func Test_stripNormalizedHeader(t *testing.T) {
 			stripNormalizedHeader(req, tt.headerToStrip)
 
 			require.Equal(t, tt.expectedHeaders, req.Header)
+		})
+	}
+}
+
+const redirectFormKey = "rd"
+
+func TestGetRedirect(t *testing.T) {
+	type testcase struct {
+		name             string
+		redirect         string
+		expectedRedirect string
+	}
+
+	testcases := []testcase{
+		{
+			name:             "non-empty redirect starting with a '/' returns the full redirect string",
+			redirect:         "/test",
+			expectedRedirect: "/test",
+		},
+		{
+			name:             "non-empty redirect starting with HTTP scheme returns '/'",
+			redirect:         "http://google.com",
+			expectedRedirect: "/",
+		},
+		{
+			name:             "non-empty redirect starting with HTTPS scheme returns '/'",
+			redirect:         "https://google.com",
+			expectedRedirect: "/",
+		},
+		{
+			name:             "empty redirect returns '/'",
+			redirect:         "",
+			expectedRedirect: "/",
+		},
+		{
+			name:             "non-empty redirect starting with a '//' returns '/'",
+			redirect:         "//test",
+			expectedRedirect: "/",
+		},
+		{
+			name:             "non-empty redirect starting with an escaped back slash returns '/'",
+			redirect:         "/\\evil.com",
+			expectedRedirect: "/",
+		},
+		{
+			name:             "non-empty redirect starting with space between slash returns '/'",
+			redirect:         "/ /evil.com",
+			expectedRedirect: "/",
+		},
+		{
+			name:             "non-empty redirect starting with space before escaped back slash returns '/'",
+			redirect:         "/ \\evil.com",
+			expectedRedirect: "/",
+		},
+		{
+			name:             "non-empty redirect starting with tab between forward slash returns '/'",
+			redirect:         "/\t/evil.com",
+			expectedRedirect: "/",
+		},
+		{
+			name:             "non-empty redirect starting with tab between escaped back slash returns '/'",
+			redirect:         "/\t\\evil.com",
+			expectedRedirect: "/",
+		},
+		{
+			name:             "non-empty redirect starting with vertical tab between forward slash returns '/'",
+			redirect:         "/\v/evil.com",
+			expectedRedirect: "/",
+		},
+		{
+			name:             "non-empty redirect starting with vertical tab between escaped back slash returns '/'",
+			redirect:         "/\v\\evil.com",
+			expectedRedirect: "/",
+		},
+		{
+			name:             "non-empty redirect starting with newline between forward slash returns '/'",
+			redirect:         "/\n/evil.com",
+			expectedRedirect: "/",
+		},
+		{
+			name:             "non-empty redirect starting with newline between escaped back slash returns '/'",
+			redirect:         "/\n\\evil.com",
+			expectedRedirect: "/",
+		},
+		{
+			name:             "non-empty redirect starting with carriage return between forward slash returns '/'",
+			redirect:         "/\r/evil.com",
+			expectedRedirect: "/",
+		},
+		{
+			name:             "non-empty redirect starting with carriage return between escaped back slash returns '/'",
+			redirect:         "/\r\\evil.com",
+			expectedRedirect: "/",
+		},
+		{
+			name:             "double tabs",
+			redirect:         "/\t/\t\\evil.com",
+			expectedRedirect: "/",
+		},
+		{
+			name:             "triple tabs",
+			redirect:         "/\t\t/\t/evil.com",
+			expectedRedirect: "/",
+		},
+		{
+			name:             "triple tabs with escaped back slash",
+			redirect:         "/\t\t\\\t/evil.com",
+			expectedRedirect: "/",
+		},
+		{
+			name:             "relative path",
+			redirect:         "/./\\evil.com",
+			expectedRedirect: "/",
+		},
+		{
+			name:             "relative subpath",
+			redirect:         "/./../../\\evil.com",
+			expectedRedirect: "/",
+		},
+	}
+
+	for _, tc := range testcases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := &http.Request{
+				Form: url.Values{
+					redirectFormKey: []string{tc.redirect},
+				},
+			}
+
+			oap := &OAuthProxy{}
+			actual, err := oap.GetRedirect(req)
+			if err != nil {
+				t.Fatalf("received an unexpected error: %v", err)
+			}
+
+			if actual != tc.expectedRedirect {
+				t.Fatalf("expected redirect value of %q but received %q", tc.expectedRedirect, actual)
+			}
 		})
 	}
 }
