@@ -11,8 +11,6 @@ import (
 
 	"k8s.io/apiserver/pkg/server/dynamiccertificates"
 
-	oscrypto "github.com/openshift/library-go/pkg/crypto"
-
 	"github.com/openshift/oauth-proxy/util"
 )
 
@@ -72,13 +70,22 @@ func (s *Server) ServeHTTP() {
 	log.Printf("HTTP: closing %s", listener.Addr())
 }
 
+func (s *Server) buildTLSConfig() *tls.Config {
+	config := &tls.Config{
+		MinVersion: s.Opts.tlsMinVersionValue,
+		NextProtos: []string{"http/1.1"},
+	}
+
+	if len(s.Opts.tlsCipherSuiteIDs) > 0 {
+		config.CipherSuites = s.Opts.tlsCipherSuiteIDs
+	}
+
+	return config
+}
+
 func (s *Server) ServeHTTPS(ctx context.Context) {
 	addr := s.Opts.HttpsAddress
-
-	config := oscrypto.SecureTLSConfig(&tls.Config{})
-	if config.NextProtos == nil {
-		config.NextProtos = []string{"http/1.1"}
-	}
+	config := s.buildTLSConfig()
 
 	var err error
 	servingCertProvider, err := dynamiccertificates.NewDynamicServingContentFromFiles("serving", s.Opts.TLSCertFile, s.Opts.TLSKeyFile)
