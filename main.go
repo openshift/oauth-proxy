@@ -32,6 +32,7 @@ func main() {
 	openshiftCAs := NewStringArray()
 	clientCA := ""
 	upstreamCAs := NewStringArray()
+	tlsCipherSuitesStr := ""
 
 	config := flagSet.String("config", "", "path to config file")
 	showVersion := flagSet.Bool("version", false, "print version string")
@@ -42,6 +43,8 @@ func main() {
 	flagSet.String("tls-cert", "", "path to certificate file")
 	flagSet.String("tls-key", "", "path to private key file")
 	flagSet.StringVar(&clientCA, "tls-client-ca", clientCA, "path to a CA file for admitting client certificates.")
+	flagSet.String("tls-min-version", "", "minimum TLS version (e.g., VersionTLS12, VersionTLS13). Defaults to TLS 1.3")
+	flagSet.StringVar(&tlsCipherSuitesStr, "tls-cipher-suites", "", "comma-separated list of TLS cipher suites")
 	flagSet.String("redirect-url", "", "the OAuth Redirect URL. ie: \"https://internalapp.yourcompany.com/oauth/callback\"")
 	flagSet.Bool("set-xauthrequest", false, "set X-Auth-Request-User and X-Auth-Request-Email response headers (useful in Nginx auth_request mode)")
 	flagSet.Var(upstreams, "upstream", "the http url(s) of the upstream endpoint or file:// paths for static files. Routing is based on the path")
@@ -130,6 +133,18 @@ func main() {
 	}
 	cfg.LoadEnvForStruct(opts)
 	options.Resolve(opts, flagSet, cfg)
+
+	// Parse comma-separated TLS cipher suites from CLI (overrides config file)
+	if tlsCipherSuitesStr != "" {
+		cipherSuites := strings.Split(tlsCipherSuitesStr, ",")
+		opts.TLSCipherSuites = make([]string, 0, len(cipherSuites))
+		for _, cipher := range cipherSuites {
+			trimmed := strings.TrimSpace(cipher)
+			if trimmed != "" {
+				opts.TLSCipherSuites = append(opts.TLSCipherSuites, trimmed)
+			}
+		}
+	}
 
 	var p providers.Provider
 	switch opts.Provider {
