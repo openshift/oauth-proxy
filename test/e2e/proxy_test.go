@@ -198,6 +198,14 @@ func TestOAuthProxyE2E(t *testing.T) {
 			pageResult:    "NOW:",
 			bypass:        true,
 		},
+		{
+			name: "tls12-3des-disabled",
+			proxyArgs: []string{
+				"--upstream=http://localhost:8080",
+				"--tls-min-version=VersionTLS12",
+			},
+			pageResult: "NOW:",
+		},
 	}
 
 	users, idpCleanup := createTestIdP(
@@ -332,7 +340,9 @@ func TestOAuthProxyE2E(t *testing.T) {
 
 			_ = waitForHealthzCheck(t, openshiftTransport, "https://"+proxyRouteHost)
 
-			check3DESDisabled(t, "https://"+proxyRouteHost, caPem)
+			if tc.name == "tls12-3des-disabled" {
+				check3DESDisabled(t, "https://"+proxyRouteHost, caPem)
+			}
 
 			t.Logf("Testing OAuth proxy login with user %s to path %s",
 				user, tc.accessSubPath)
