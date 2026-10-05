@@ -780,7 +780,8 @@ func newOAuthProxyPod(proxyImage, backendImage string, suffix string, extraProxy
 				},
 				{
 					Image: backendImage,
-					Name:  "hello-openshift",
+					Name:  "agnhost",
+					Args:  []string{"netexec", "--http-port=8080"},
 					SecurityContext: &v1.SecurityContext{
 						AllowPrivilegeEscalation: pointer.Bool(false),
 						Capabilities:             &v1.Capabilities{Drop: []v1.Capability{"ALL"}},
