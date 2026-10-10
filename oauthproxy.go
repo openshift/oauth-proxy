@@ -522,11 +522,38 @@ func (p *OAuthProxy) GetRedirect(req *http.Request) (redirect string, err error)
 	}
 
 	redirect = req.Form.Get("rd")
-	if redirect == "" || !strings.HasPrefix(redirect, "/") || strings.HasPrefix(redirect, "//") {
+	if !isValidRedirect(redirect) {
 		redirect = "/"
 	}
 
 	return
+}
+
+var (
+	// Used to check final redirects are not susceptible to open redirects.
+	// Matches //, /\ and both of these with whitespace in between (eg / / or / \).
+	invalidRedirectRegex = regexp.MustCompile(`[/\\](?:[\s\v]*|\.{1,2})[/\\]`)
+)
+
+// isValidRedirect replicates the behavior of the upstream oauth2-proxy redirect validation
+// in https://github.com/oauth2-proxy/oauth2-proxy/blob/c5529b42b7ebf2bf098b4b139f40fcea9a57bffd/pkg/app/redirect/validator.go#L1-L66
+// which appropriately ensures that redirects are not susceptible to open redirect attacks.
+// It does not copy over the domain whitelisting behavior because it did not already exist within this earlier
+// fork of the project.
+// We also do not allow actual URLs because this fork of the proxy is only ever intended to be run as a sidecar
+// to the actual upstream application it is acting as a proxy for.
+// We should never have the use case that resulted in allowing non-local redirects in the upstream oauth2-proxy project.
+// (reference: https://github.com/oauth2-proxy/oauth2-proxy/pull/15)
+func isValidRedirect(redirect string) bool {
+	if redirect == "" {
+		return false
+	}
+
+	if strings.HasPrefix(redirect, "/") && !strings.HasPrefix(redirect, "//") && !invalidRedirectRegex.MatchString(redirect) {
+		return true
+	}
+
+	return false
 }
 
 func (p *OAuthProxy) IsWhitelistedRequest(req *http.Request) (ok bool) {
@@ -682,7 +709,7 @@ func (p *OAuthProxy) OAuthCallback(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	if !strings.HasPrefix(redirect, "/") || strings.HasPrefix(redirect, "//") {
+	if !isValidRedirect(redirect) {
 		redirect = "/"
 	}
 
