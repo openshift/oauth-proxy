@@ -1,0 +1,75 @@
+kind: List
+apiVersion: v1
+items:
+# Create a proxy service account and ensure it will use the route "proxy"
+- apiVersion: v1
+  kind: ServiceAccount
+  metadata:
+    name: proxy
+    annotations:
+      serviceaccounts.openshift.io/oauth-redirectreference.primary: '{"kind":"OAuthRedirectReference","apiVersion":"v1","reference":{"kind":"Route","name":"proxy"}}'
+# Create a secure connection to the proxy via a route
+- apiVersion: route.openshift.io/v1
+  kind: Route
+  metadata:
+    name: proxy
+  spec:
+    to:
+      kind: Service
+      name: proxy
+    tls:
+      termination: Reencrypt
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: proxy
+    annotations:
+      service.alpha.openshift.io/serving-cert-secret-name: proxy-tls
+  spec:
+    ports:
+    - name: proxy
+      port: 443
+      targetPort: 8443
+    selector:
+      app: proxy
+# Launch a proxy as a sidecar
+- apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    name: proxy
+  spec:
+    replicas: 1
+    selector:
+      matchLabels:
+        app: proxy
+    template:
+      metadata:
+        labels:
+          app: proxy
+      spec:
+        serviceAccountName: proxy
+        containers:
+        - name: oauth-proxy
+          image: openshift/oauth-proxy:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+          - containerPort: 8443
+            name: public
+          args:
+          - --https-address=:8443
+          - --provider=openshift
+          - --openshift-service-account=proxy
+          - --upstream=http://localhost:8080
+          - --tls-cert=/etc/tls/private/tls.crt
+          - --tls-key=/etc/tls/private/tls.key
+          - --cookie-secret=SECRET
+          volumeMounts:
+          - mountPath: /etc/tls/private
+            name: proxy-tls
+
+        - name: app
+          image: openshift/hello-openshift:latest
+        volumes:
+        - name: proxy-tls
+          secret:
+            secretName: proxy-tls
