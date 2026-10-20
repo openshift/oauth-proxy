@@ -3,6 +3,7 @@ package main
 import (
 	"crypto"
 	"encoding/base64"
+	"encoding/json"
 	"io"
 	"io/ioutil"
 	"log"
@@ -1317,4 +1318,297 @@ func TestGetRedirect(t *testing.T) {
 			}
 		})
 	}
+}
+
+// --- OCPBUGS-132379: inbound identity header stripping ---------------------
+
+// Test_stripIdentityHeaders verifies the helper always removes the
+// X-Forwarded-* identity headers (including underscore/mixed-case smuggling
+// variants) and removes Authorization only when PassBasicAuth is disabled.
+func Test_stripIdentityHeaders(t *testing.T) {
+	tests := []struct {
+		name            string
+		passBasicAuth   bool
+		initialHeaders  http.Header
+		expectedHeaders http.Header
+	}{
+		{
+			name:          "strips all identity headers when basic auth disabled",
+			passBasicAuth: false,
+			initialHeaders: http.Header{
+				"X-Forwarded-User":         {"attacker"},
+				"X-Forwarded-Email":        {"attacker@evil.com"},
+				"X-Forwarded-Access-Token": {"stolen-token"},
+				"X-Forwarded-Groups":       {"admins"},
+				"Authorization":            {"spoofed-authz-header"},
+				"Content-Type":             {"application/json"},
+			},
+			expectedHeaders: http.Header{
+				"Content-Type": {"application/json"},
+			},
+		},
+		{
+			name:          "preserves Authorization when basic auth enabled",
+			passBasicAuth: true,
+			initialHeaders: http.Header{
+				"X-Forwarded-User":         {"attacker"},
+				"X-Forwarded-Access-Token": {"stolen-token"},
+				"Authorization":            {"preserved-authz-header"},
+				"Content-Type":             {"application/json"},
+			},
+			expectedHeaders: http.Header{
+				"Authorization": {"preserved-authz-header"},
+				"Content-Type":  {"application/json"},
+			},
+		},
+		{
+			name:          "strips underscore and mixed-case smuggling variants",
+			passBasicAuth: false,
+			initialHeaders: http.Header{
+				"X-Forwarded_User":         {"attacker"},
+				"X-Forwarded_Access_Token": {"stolen-token"},
+				"x-forwarded-email":        {"attacker@evil.com"},
+				"X_Forwarded_Groups":       {"admins"},
+				"AUTHORIZATION":            {"spoofed-authz-header"},
+				"Content-Type":             {"application/json"},
+			},
+			expectedHeaders: http.Header{
+				"Content-Type": {"application/json"},
+			},
+		},
+		{
+			name:          "no identity headers present is a no-op",
+			passBasicAuth: false,
+			initialHeaders: http.Header{
+				"Content-Type": {"application/json"},
+			},
+			expectedHeaders: http.Header{
+				"Content-Type": {"application/json"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", "/test", nil)
+			req.Header = tt.initialHeaders
+
+			stripIdentityHeaders(req, tt.passBasicAuth)
+
+			require.Equal(t, tt.expectedHeaders, req.Header)
+		})
+	}
+}
+
+// identityHeaderNames is the set of identity headers that must never be
+// forwarded from the client to the upstream.
+var identityHeaderNames = []string{
+	"X-Forwarded-User",
+	"X-Forwarded-Email",
+	"X-Forwarded-Access-Token",
+	"X-Forwarded-Groups",
+	"Authorization",
+}
+
+// collectLeakedIdentityHeaders returns any request headers whose normalized
+// name matches an identity header, catching underscore/mixed-case variants.
+func collectLeakedIdentityHeaders(h http.Header) map[string]string {
+	identity := map[string]struct{}{}
+	for _, name := range identityHeaderNames {
+		identity[normalizeHeaderName(name)] = struct{}{}
+	}
+	leaked := map[string]string{}
+	for name, vals := range h {
+		if _, ok := identity[normalizeHeaderName(name)]; ok {
+			leaked[name] = strings.Join(vals, ",")
+		}
+	}
+	return leaked
+}
+
+// setSpoofedIdentityHeaders adds a representative set of client-supplied
+// identity headers, including underscore/mixed-case smuggling variants.
+func setSpoofedIdentityHeaders(req *http.Request) {
+	req.Header.Set("X-Forwarded-User", "attacker")
+	req.Header.Set("X-Forwarded-Email", "attacker@evil.com")
+	req.Header.Set("X-Forwarded-Access-Token", "stolen-token")
+	req.Header.Set("X-Forwarded-Groups", "admins")
+	req.Header.Set("Authorization", "spoofed-authz-header")
+	// smuggling variants that normalize to the same identity headers
+	req.Header.Set("X-Forwarded_User", "attacker-underscore")
+	req.Header.Set("X-Forwarded_Access_Token", "stolen-underscore")
+}
+
+type stripHeadersTest struct {
+	providerServer *httptest.Server
+	proxy          *OAuthProxy
+	opts           *Options
+}
+
+// newStripHeadersTest builds a proxy whose upstream echoes, as JSON, any
+// identity headers it received. The same server also serves the provider token
+// endpoint so the OAuth callback flow can mint a session cookie.
+func newStripHeadersTest(configure func(*Options)) *stripHeadersTest {
+	st := &stripHeadersTest{}
+
+	st.providerServer = httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/oauth/token" {
+				w.WriteHeader(200)
+				w.Write([]byte(`{"access_token": "my_auth_token"}`))
+				return
+			}
+			leaked := collectLeakedIdentityHeaders(r.Header)
+			body, _ := json.Marshal(leaked)
+			w.WriteHeader(200)
+			w.Write(body)
+		}))
+
+	st.opts = NewOptions()
+	st.opts.Upstreams = append(st.opts.Upstreams, st.providerServer.URL)
+	// The CookieSecret must be 32 bytes in order to create the AES cipher.
+	st.opts.CookieSecret = "xyzzyplughxyzzyplughxyzzyplughxp"
+	st.opts.ClientID = "bazquux"
+	st.opts.ClientSecret = "foobar"
+	st.opts.EmailDomains = []string{"*"}
+	st.opts.CookieSecure = false
+	if configure != nil {
+		configure(st.opts)
+	}
+	if err := st.opts.Validate(&testProvider{}); err != nil {
+		panic(err)
+	}
+
+	providerURL, _ := url.Parse(st.providerServer.URL)
+	st.opts.provider = NewTestProvider(providerURL, "michael.bland@gsa.gov")
+	st.proxy = NewOAuthProxy(st.opts, func(email string) bool {
+		return email == "michael.bland@gsa.gov"
+	})
+	return st
+}
+
+func (st *stripHeadersTest) Close() {
+	st.providerServer.Close()
+}
+
+// authenticate runs the OAuth callback flow and returns the session cookie value.
+func (st *stripHeadersTest) authenticate(t *testing.T) string {
+	rw := httptest.NewRecorder()
+	req, err := http.NewRequest("GET", "/oauth2/callback?code=callback_code&state=nonce:", strings.NewReader(""))
+	require.NoError(t, err)
+	req.AddCookie(st.proxy.MakeCSRFCookie(req, "nonce", time.Hour, time.Now()))
+	st.proxy.ServeHTTP(rw, req)
+	require.Equal(t, 302, rw.Code, "callback should redirect on success")
+
+	setCookies := rw.HeaderMap["Set-Cookie"]
+	require.GreaterOrEqual(t, len(setCookies), 2, "expected a session cookie to be set")
+
+	cookie := setCookies[1]
+	cookieName := st.proxy.CookieName
+	keyPrefix := cookieName + "="
+	for _, field := range strings.Split(cookie, "; ") {
+		value := strings.TrimPrefix(field, keyPrefix)
+		if value != field {
+			return value
+		}
+	}
+	t.Fatalf("session cookie %q not found in %q", cookieName, cookie)
+	return ""
+}
+
+// TestAuthenticateStripsInboundIdentityHeadersWhenPassDisabled is the core
+// OCPBUGS-132379 regression test for the authenticated path: with every Pass*
+// option disabled, client-supplied identity headers must NOT reach the upstream.
+func TestAuthenticateStripsInboundIdentityHeadersWhenPassDisabled(t *testing.T) {
+	st := newStripHeadersTest(func(o *Options) {
+		o.PassBasicAuth = false
+		o.PassUserHeaders = false
+		o.PassAccessToken = false
+		o.PassUserBearerToken = false
+		o.SetXAuthRequest = false
+	})
+	defer st.Close()
+
+	sessionCookie := st.authenticate(t)
+
+	req, err := http.NewRequest("GET", "/", strings.NewReader(""))
+	require.NoError(t, err)
+	req.AddCookie(&http.Cookie{
+		Name:     st.proxy.CookieName,
+		Value:    sessionCookie,
+		Path:     "/",
+		Expires:  time.Now().Add(24 * time.Hour),
+		HttpOnly: true,
+	})
+	setSpoofedIdentityHeaders(req)
+
+	rw := httptest.NewRecorder()
+	st.proxy.ServeHTTP(rw, req)
+	require.Equal(t, 200, rw.Code)
+
+	leaked := map[string]string{}
+	require.NoError(t, json.Unmarshal(rw.Body.Bytes(), &leaked))
+	require.Equalf(t, 0, len(leaked),
+		"client-supplied identity headers leaked to upstream on authenticated path: %v", leaked)
+}
+
+// TestWhitelistPathStripsInboundIdentityHeaders is the OCPBUGS-132379
+// regression test for the skip-auth-regex whitelist path, which bypasses
+// Authenticate entirely: client-supplied identity headers must still be stripped.
+func TestWhitelistPathStripsInboundIdentityHeaders(t *testing.T) {
+	st := newStripHeadersTest(func(o *Options) {
+		// Exercise Authorization stripping as well (default PassBasicAuth is true).
+		o.PassBasicAuth = false
+		o.SkipAuthRegex = []string{"^/public"}
+	})
+	defer st.Close()
+
+	// Sanity-check the path is actually treated as whitelisted.
+	probe, _ := http.NewRequest("GET", "/public/resource", nil)
+	require.True(t, st.proxy.IsWhitelistedRequest(probe), "path should match skip-auth-regex")
+
+	req, err := http.NewRequest("GET", "/public/resource", strings.NewReader(""))
+	require.NoError(t, err)
+	setSpoofedIdentityHeaders(req)
+
+	rw := httptest.NewRecorder()
+	st.proxy.ServeHTTP(rw, req)
+	require.Equal(t, 200, rw.Code, "whitelisted request should be proxied to upstream")
+
+	leaked := map[string]string{}
+	require.NoError(t, json.Unmarshal(rw.Body.Bytes(), &leaked))
+	require.Equalf(t, 0, len(leaked),
+		"client-supplied identity headers leaked to upstream on whitelist path: %v", leaked)
+}
+
+// TestWhitelistPathPreservesAuthorizationWhenPassBasicAuth verifies that, on
+// the whitelist path, Authorization is preserved when PassBasicAuth is enabled
+// (the proxy delegates Authorization to proxy-managed basic auth), while the
+// trusted X-Forwarded-* identity headers are still stripped.
+func TestWhitelistPathPreservesAuthorizationWhenPassBasicAuth(t *testing.T) {
+	st := newStripHeadersTest(func(o *Options) {
+		o.PassBasicAuth = true
+		o.SkipAuthRegex = []string{"^/public"}
+	})
+	defer st.Close()
+
+	req, err := http.NewRequest("GET", "/public/resource", strings.NewReader(""))
+	require.NoError(t, err)
+	setSpoofedIdentityHeaders(req)
+
+	rw := httptest.NewRecorder()
+	st.proxy.ServeHTTP(rw, req)
+	require.Equal(t, 200, rw.Code)
+
+	leaked := map[string]string{}
+	require.NoError(t, json.Unmarshal(rw.Body.Bytes(), &leaked))
+
+	// X-Forwarded-* must always be stripped.
+	for name := range leaked {
+		require.NotContainsf(t, strings.ToLower(normalizeHeaderName(name)), "x-forwarded",
+			"X-Forwarded identity header leaked to upstream: %s", name)
+	}
+	// Authorization is intentionally preserved when PassBasicAuth is enabled.
+	require.Equal(t, 1, len(leaked), "only Authorization should remain: %v", leaked)
+	require.Equal(t, "spoofed-authz-header", leaked["Authorization"])
 }
