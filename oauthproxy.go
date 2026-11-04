@@ -599,6 +599,10 @@ func (p *OAuthProxy) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	case path == p.PingPath:
 		p.PingPage(rw)
 	case p.IsWhitelistedRequest(req):
+		// Whitelisted (skip-auth-regex / preflight) requests bypass
+		// Authenticate entirely. Strip any client-supplied identity headers
+		// here as well so they cannot be spoofed through to the upstream.
+		stripIdentityHeaders(req, p.PassBasicAuth)
 		p.serveMux.ServeHTTP(rw, req)
 	case path == p.SignInPath:
 		p.SignIn(rw, req)
@@ -831,7 +835,17 @@ func (p *OAuthProxy) Authenticate(rw http.ResponseWriter, req *http.Request) int
 		return http.StatusForbidden
 	}
 
-	// At this point, the user is authenticated. proxy normally
+	// At this point, the user is authenticated.
+	//
+	// Unconditionally strip any client-supplied identity headers before
+	// proxying. Previously these were cleared only as a side effect of
+	// setRequestHeader/SetBasicAuth, which run inside the conditional blocks
+	// below; if the relevant Pass* option was disabled, a client could smuggle
+	// X-Forwarded-* or Authorization headers straight through to the upstream.
+	// The authoritative values (when enabled) are re-added by the blocks below.
+	stripIdentityHeaders(req, p.PassBasicAuth)
+
+	// proxy normally
 	if p.PassBasicAuth {
 		req.SetBasicAuth(session.User, p.BasicAuthPassword)
 		setRequestHeader(req, "X-Forwarded-User", session.User)
@@ -946,4 +960,25 @@ func setRequestHeader(req *http.Request, headerName string, value string) {
 		req.Header = http.Header{}
 	}
 	req.Header[headerName] = []string{value}
+}
+
+// stripIdentityHeaders unconditionally removes any client-supplied identity
+// headers from the request so they can never be smuggled through to the
+// upstream. The X-Forwarded-* identity headers are proxy-asserted claims that
+// the upstream trusts, so they are always stripped regardless of which Pass*
+// options are enabled. Authorization is stripped only when PassBasicAuth is
+// disabled: when it is enabled, the proxy is responsible for the Authorization
+// header and SetBasicAuth overwrites it with proxy-managed credentials.
+//
+// This must be called before the conditional setRequestHeader/SetBasicAuth
+// blocks re-add authoritative values, and on request paths (such as the
+// skip-auth-regex whitelist) that bypass authentication entirely.
+func stripIdentityHeaders(req *http.Request, passBasicAuth bool) {
+	stripNormalizedHeader(req, "X-Forwarded-User")
+	stripNormalizedHeader(req, "X-Forwarded-Email")
+	stripNormalizedHeader(req, "X-Forwarded-Access-Token")
+	stripNormalizedHeader(req, "X-Forwarded-Groups")
+	if !passBasicAuth {
+		stripNormalizedHeader(req, "Authorization")
+	}
 }
