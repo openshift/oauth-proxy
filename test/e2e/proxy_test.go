@@ -92,7 +92,7 @@ func TestOAuthProxyE2E(t *testing.T) {
 			proxyArgs: []string{
 				"--upstream=http://localhost:8080",
 			},
-			pageResult: "URI: /",
+			pageResult: "NOW:",
 		},
 		{
 			name: "scope-full",
@@ -108,7 +108,7 @@ func TestOAuthProxyE2E(t *testing.T) {
 				"--upstream=http://localhost:8080",
 				`--openshift-sar={"namespace":"` + ns + `","resource":"services","verb":"list"}`,
 			},
-			pageResult: "URI: /",
+			pageResult: "NOW:",
 		},
 		{
 			name: "sar-fail",
@@ -124,7 +124,7 @@ func TestOAuthProxyE2E(t *testing.T) {
 				"--upstream=http://localhost:8080",
 				`--openshift-sar={"namespace":"` + ns + `","resource":"routes","resourceName":"proxy-route","verb":"get"}`,
 			},
-			pageResult: "URI: /",
+			pageResult: "NOW:",
 		},
 		{
 			name: "sar-name-fail",
@@ -140,7 +140,7 @@ func TestOAuthProxyE2E(t *testing.T) {
 				"--upstream=http://localhost:8080",
 				`--openshift-sar=[{"namespace":"` + ns + `","resource":"services","verb":"list"}, {"namespace":"` + ns + `","resource":"routes","verb":"list"}]`,
 			},
-			pageResult: "URI: /",
+			pageResult: "NOW:",
 		},
 		{
 			name: "sar-multi-fail",
@@ -157,7 +157,7 @@ func TestOAuthProxyE2E(t *testing.T) {
 				`--skip-auth-regex=^/foo`,
 			},
 			accessSubPath: "/foo",
-			pageResult:    "URI: /foo\n",
+			pageResult:    "NOW:",
 			bypass:        true,
 		},
 		{
@@ -167,7 +167,7 @@ func TestOAuthProxyE2E(t *testing.T) {
 				`--skip-auth-regex=^/foo`,
 			},
 			accessSubPath: "/bar",
-			pageResult:    "URI: /bar",
+			pageResult:    "NOW:",
 		},
 		{
 			name: "bypass-auth-foo",
@@ -176,7 +176,7 @@ func TestOAuthProxyE2E(t *testing.T) {
 				`--bypass-auth-for=^/foo`,
 			},
 			accessSubPath: "/foo",
-			pageResult:    "URI: /foo\n",
+			pageResult:    "NOW:",
 			bypass:        true,
 		},
 		{
@@ -186,7 +186,7 @@ func TestOAuthProxyE2E(t *testing.T) {
 				`--bypass-auth-except-for=^/foo`,
 			},
 			accessSubPath: "/foo",
-			pageResult:    "URI: /foo\n",
+			pageResult:    "NOW:",
 		},
 		{
 			name: "bypass-auth-except-bypassed",
@@ -195,7 +195,7 @@ func TestOAuthProxyE2E(t *testing.T) {
 				`--bypass-auth-except-for=^/foo`,
 			},
 			accessSubPath: "/bar",
-			pageResult:    "URI: /bar",
+			pageResult:    "NOW:",
 			bypass:        true,
 		},
 	}
@@ -227,7 +227,7 @@ func TestOAuthProxyE2E(t *testing.T) {
 	openshiftTransport, err := rest.TransportFor(testConfig)
 	require.NoError(t, err)
 
-	backendImage := "nginxdemos/nginx-hello:plain-text"
+	backendImage := "registry.k8s.io/e2e-test-images/agnhost:2.56"
 
 	upstreamCA, upstreamCert, upstreamKey, err := createCAandCertSet("localhost")
 	require.NoError(t, err, "Error creating upstream TLS certificates")
