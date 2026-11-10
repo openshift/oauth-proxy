@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -43,6 +44,7 @@ type Options struct {
 	TLSClientCAFile  string        `flag:"tls-client-ca" cfg:"tls_client_ca"`
 	TLSMinVersion    string        `flag:"tls-min-version" cfg:"tls_min_version"`
 	TLSCipherSuites  []string      `cfg:"tls_cipher_suites"` // No flag tag - manually parsed after Resolve()
+	TLSGroups        []string      `cfg:"tls_groups"`        // No flag tag - manually parsed after Resolve()
 
 	AuthenticatedEmailsFile string   `flag:"authenticated-emails-file" cfg:"authenticated_emails_file"`
 	EmailDomains            []string `flag:"email-domain" cfg:"email_domains"`
@@ -122,6 +124,7 @@ type Options struct {
 	signatureData      *SignatureData
 	tlsMinVersionValue uint16
 	tlsCipherSuiteIDs  []uint16
+	tlsCurveIDs        []tls.CurveID
 }
 
 type SignatureData struct {
@@ -339,6 +342,30 @@ func (o *Options) Validate(p providers.Provider) error {
 		}
 	}
 
+	if len(o.TLSGroups) > 0 {
+		var unrecognized []string
+		o.tlsCurveIDs = make([]tls.CurveID, 0, len(o.TLSGroups))
+		for _, name := range o.TLSGroups {
+			if id, ok := tlsGroupMap[name]; ok {
+				o.tlsCurveIDs = append(o.tlsCurveIDs, id)
+			} else {
+				unrecognized = append(unrecognized, name)
+			}
+		}
+		// Unlike cipher suites, individually unrecognized groups are logged and skipped rather than
+		// failing validation. TLS group support is Go-version dependent, so passing a newer group
+		// name to an older oauth-proxy build should degrade gracefully (use the recognized groups)
+		// instead of crash-looping. This matches kube-rbac-proxy and other OCM components.
+		if len(unrecognized) > 0 {
+			log.Printf("ignoring unrecognized tls-groups not supported by this build: %s", strings.Join(unrecognized, ", "))
+		}
+		// Fail closed: if groups were explicitly requested but none are usable, reject rather than
+		// silently falling back to Go's defaults, which would drop the intended restriction.
+		if len(o.tlsCurveIDs) == 0 {
+			msgs = append(msgs, fmt.Sprintf("no supported tls-groups in %q", strings.Join(o.TLSGroups, ", ")))
+		}
+	}
+
 	switch o.CookieSameSite {
 	case "", "none", "lax", "strict":
 	default:
@@ -469,6 +496,18 @@ var tlsCipherSuiteMap = func() map[string]uint16 {
 	}
 	return m
 }()
+
+// tlsGroupMap maps TLS named-group names (IANA "TLS Supported Groups"
+// registry names, as used by the OpenShift TLSSecurityProfile `groups` field)
+// to their crypto/tls CurveID. crypto/tls does not expose an enumerator for
+// these, so the mapping is maintained explicitly.
+var tlsGroupMap = map[string]tls.CurveID{
+	"X25519":         tls.X25519,
+	"secp256r1":      tls.CurveP256,
+	"secp384r1":      tls.CurveP384,
+	"secp521r1":      tls.CurveP521,
+	"X25519MLKEM768": tls.X25519MLKEM768,
+}
 
 func validTLSVersions() string {
 	versions := make([]string, 0, len(tlsVersionMap))
