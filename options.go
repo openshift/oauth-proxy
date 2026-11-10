@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/18F/hmacauth"
 
+	configv1 "github.com/openshift/api/config/v1"
 	oscrypto "github.com/openshift/library-go/pkg/crypto"
 
 	"github.com/openshift/oauth-proxy/providers"
@@ -43,6 +45,7 @@ type Options struct {
 	TLSClientCAFile  string        `flag:"tls-client-ca" cfg:"tls_client_ca"`
 	TLSMinVersion    string        `flag:"tls-min-version" cfg:"tls_min_version"`
 	TLSCipherSuites  []string      `cfg:"tls_cipher_suites"` // No flag tag - manually parsed after Resolve()
+	TLSGroups        []string      `cfg:"tls_groups"`        // No flag tag - manually parsed after Resolve()
 
 	AuthenticatedEmailsFile string   `flag:"authenticated-emails-file" cfg:"authenticated_emails_file"`
 	EmailDomains            []string `flag:"email-domain" cfg:"email_domains"`
@@ -122,6 +125,7 @@ type Options struct {
 	signatureData      *SignatureData
 	tlsMinVersionValue uint16
 	tlsCipherSuiteIDs  []uint16
+	tlsCurveIDs        []tls.CurveID
 }
 
 type SignatureData struct {
@@ -336,6 +340,31 @@ func (o *Options) Validate(p providers.Provider) error {
 		}
 		if len(unrecognized) > 0 {
 			msgs = append(msgs, fmt.Sprintf("unrecognized tls-cipher-suites: %s", strings.Join(unrecognized, ", ")))
+		}
+	}
+
+	if len(o.TLSGroups) > 0 {
+		groups := make([]configv1.TLSGroup, len(o.TLSGroups))
+		for i, name := range o.TLSGroups {
+			groups[i] = configv1.TLSGroup(name)
+		}
+		curves, unrecognized := oscrypto.TLSGroupsToCurveIDs(groups)
+		o.tlsCurveIDs = curves
+		// Unlike cipher suites, individually unrecognized groups are logged and skipped rather than
+		// failing validation. TLS group support is Go-version dependent, so passing a newer group
+		// name to an older oauth-proxy build should degrade gracefully (use the recognized groups)
+		// instead of crash-looping. This matches kube-rbac-proxy and other OCM components.
+		if len(unrecognized) > 0 {
+			names := make([]string, len(unrecognized))
+			for i, group := range unrecognized {
+				names[i] = string(group)
+			}
+			log.Printf("ignoring unrecognized tls-groups not supported by this build: %s", strings.Join(names, ", "))
+		}
+		// Fail closed: if groups were explicitly requested but none are usable, reject rather than
+		// silently falling back to Go's defaults, which would drop the intended restriction.
+		if len(o.tlsCurveIDs) == 0 {
+			msgs = append(msgs, fmt.Sprintf("no supported tls-groups in %q", strings.Join(o.TLSGroups, ", ")))
 		}
 	}
 
