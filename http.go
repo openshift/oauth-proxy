@@ -80,6 +80,10 @@ func (s *Server) buildTLSConfig() *tls.Config {
 		config.CipherSuites = s.Opts.tlsCipherSuiteIDs
 	}
 
+	if len(s.Opts.tlsCurveIDs) > 0 {
+		config.CurvePreferences = s.Opts.tlsCurveIDs
+	}
+
 	return config
 }
 
