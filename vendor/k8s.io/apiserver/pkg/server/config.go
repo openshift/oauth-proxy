@@ -19,6 +19,7 @@ package server
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/base32"
 	"fmt"
 	"net"
@@ -55,6 +56,7 @@ import (
 	discoveryendpoint "k8s.io/apiserver/pkg/endpoints/discovery/aggregated"
 	"k8s.io/apiserver/pkg/endpoints/filterlatency"
 	genericapifilters "k8s.io/apiserver/pkg/endpoints/filters"
+	"k8s.io/apiserver/pkg/endpoints/filters/impersonation"
 	apiopenapi "k8s.io/apiserver/pkg/endpoints/openapi"
 	apirequest "k8s.io/apiserver/pkg/endpoints/request"
 	genericfeatures "k8s.io/apiserver/pkg/features"
@@ -62,6 +64,7 @@ import (
 	"k8s.io/apiserver/pkg/server/dynamiccertificates"
 	"k8s.io/apiserver/pkg/server/egressselector"
 	genericfilters "k8s.io/apiserver/pkg/server/filters"
+	"k8s.io/apiserver/pkg/server/flagz"
 	"k8s.io/apiserver/pkg/server/healthz"
 	"k8s.io/apiserver/pkg/server/routes"
 	"k8s.io/apiserver/pkg/server/routine"
@@ -79,7 +82,6 @@ import (
 	"k8s.io/component-base/metrics/features"
 	"k8s.io/component-base/metrics/prometheus/slis"
 	"k8s.io/component-base/tracing"
-	"k8s.io/component-base/zpages/flagz"
 	"k8s.io/klog/v2"
 	openapicommon "k8s.io/kube-openapi/pkg/common"
 	"k8s.io/kube-openapi/pkg/spec3"
@@ -364,6 +366,13 @@ type SecureServingInfo struct {
 	// Values are from tls package constants (https://golang.org/pkg/crypto/tls/#pkg-constants).
 	CipherSuites []uint16
 
+	// CurvePreferences optionally specifies the set of allowed key exchange mechanisms for the server.
+	// The order of the list is ignored, and key exchange mechanisms
+	// are chosen by Go from this list using an internal preference order.
+	// If empty, the default Go curves will be used.
+	// Values are from the Go crypto/tls CurveID constants (https://golang.org/pkg/crypto/tls/#CurveID).
+	CurvePreferences []tls.CurveID
+
 	// HTTP2MaxStreamsPerConnection is the limit that the api server imposes on each client.
 	// A value of zero means to use the default provided by golang's HTTP/2 support.
 	HTTP2MaxStreamsPerConnection int
@@ -570,6 +579,18 @@ func (c *Config) AddHealthChecks(healthChecks ...healthz.HealthChecker) {
 	c.HealthzChecks = append(c.HealthzChecks, healthChecks...)
 	c.LivezChecks = append(c.LivezChecks, healthChecks...)
 	c.ReadyzChecks = append(c.ReadyzChecks, healthChecks...)
+}
+
+// AddHealthzChecks adds the provided health checks to our config to be exposed by the
+// healthz endpoint of our configured apiserver.
+func (c *Config) AddHealthzChecks(healthChecks ...healthz.HealthChecker) {
+	c.HealthzChecks = append(c.HealthzChecks, healthChecks...)
+}
+
+// AddLivezChecks adds the provided health checks to our config to be exposed by the
+// livez endpoint of our configured apiserver.
+func (c *Config) AddLivezChecks(healthChecks ...healthz.HealthChecker) {
+	c.LivezChecks = append(c.LivezChecks, healthChecks...)
 }
 
 // AddReadyzChecks adds a health check to our config to be exposed by the readyz endpoint
@@ -817,6 +838,7 @@ func (c completedConfig) New(name string, delegationTarget DelegationTarget) (*G
 		UnprotectedDebugSocket:         debugSocket,
 
 		listedPathProvider: apiServerHandler,
+		Flagz:              c.Flagz,
 
 		minRequestTimeout:                   time.Duration(c.MinRequestTimeout) * time.Second,
 		ShutdownTimeout:                     c.RequestTimeout,
@@ -1030,8 +1052,13 @@ func DefaultBuildHandlerChain(apiHandler http.Handler, c *Config) http.Handler {
 	}
 
 	handler = filterlatency.TrackCompleted(handler)
-	handler = genericapifilters.WithImpersonation(handler, c.Authorization.Authorizer, c.Serializer)
-	handler = filterlatency.TrackStarted(handler, c.TracerProvider, "impersonation")
+	if c.FeatureGate.Enabled(genericfeatures.ConstrainedImpersonation) {
+		handler = impersonation.WithConstrainedImpersonation(handler, c.Authorization.Authorizer, c.Serializer)
+		handler = filterlatency.TrackStarted(handler, c.TracerProvider, "constrainedimpersonation")
+	} else {
+		handler = impersonation.WithImpersonation(handler, c.Authorization.Authorizer, c.Serializer)
+		handler = filterlatency.TrackStarted(handler, c.TracerProvider, "impersonation")
+	}
 
 	handler = filterlatency.TrackCompleted(handler)
 	handler = genericapifilters.WithAudit(handler, c.AuditBackend, c.AuditPolicyRuleEvaluator, c.LongRunningFunc)
@@ -1123,7 +1150,7 @@ func installAPI(name string, s *GenericAPIServer, c *Config) {
 	routes.Version{Version: c.EffectiveVersion.Info()}.Install(s.Handler.GoRestfulContainer)
 
 	if c.EnableDiscovery {
-		wrapped := discoveryendpoint.WrapAggregatedDiscoveryToHandler(s.DiscoveryGroupManager, s.AggregatedDiscoveryGroupManager)
+		wrapped := discoveryendpoint.WrapAggregatedDiscoveryToHandler(s.DiscoveryGroupManager, s.AggregatedDiscoveryGroupManager, s.PeerAggregatedDiscoveryManager)
 		s.Handler.GoRestfulContainer.Add(wrapped.GenerateWebService("/apis", metav1.APIGroupList{}))
 	}
 	if c.FlowControl != nil {

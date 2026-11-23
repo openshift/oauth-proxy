@@ -15,6 +15,7 @@ type ConfigV1Interface interface {
 	APIServersGetter
 	AuthenticationsGetter
 	BuildsGetter
+	CRIOCredentialProviderConfigsGetter
 	ClusterImagePoliciesGetter
 	ClusterOperatorsGetter
 	ClusterVersionsGetter
@@ -28,6 +29,7 @@ type ConfigV1Interface interface {
 	ImageTagMirrorSetsGetter
 	InfrastructuresGetter
 	IngressesGetter
+	InsightsDataGathersGetter
 	NetworksGetter
 	NodesGetter
 	OAuthsGetter
@@ -52,6 +54,10 @@ func (c *ConfigV1Client) Authentications() AuthenticationInterface {
 
 func (c *ConfigV1Client) Builds() BuildInterface {
 	return newBuilds(c)
+}
+
+func (c *ConfigV1Client) CRIOCredentialProviderConfigs() CRIOCredentialProviderConfigInterface {
+	return newCRIOCredentialProviderConfigs(c)
 }
 
 func (c *ConfigV1Client) ClusterImagePolicies() ClusterImagePolicyInterface {
@@ -104,6 +110,10 @@ func (c *ConfigV1Client) Infrastructures() InfrastructureInterface {
 
 func (c *ConfigV1Client) Ingresses() IngressInterface {
 	return newIngresses(c)
+}
+
+func (c *ConfigV1Client) InsightsDataGathers() InsightsDataGatherInterface {
+	return newInsightsDataGathers(c)
 }
 
 func (c *ConfigV1Client) Networks() NetworkInterface {
