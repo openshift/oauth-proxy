@@ -8,10 +8,39 @@ import (
 
 // OpenStackPlatformSpecApplyConfiguration represents a declarative configuration of the OpenStackPlatformSpec type for use
 // with apply.
+//
+// OpenStackPlatformSpec holds the desired state of the OpenStack infrastructure provider.
+// This only includes fields that can be modified in the cluster.
 type OpenStackPlatformSpecApplyConfiguration struct {
-	APIServerInternalIPs []configv1.IP   `json:"apiServerInternalIPs,omitempty"`
-	IngressIPs           []configv1.IP   `json:"ingressIPs,omitempty"`
-	MachineNetworks      []configv1.CIDR `json:"machineNetworks,omitempty"`
+	// apiServerInternalIPs are the IP addresses to contact the Kubernetes API
+	// server that can be used by components inside the cluster, like kubelets
+	// using the infrastructure rather than Kubernetes networking. These are the
+	// IPs for a self-hosted load balancer in front of the API servers.
+	// In dual stack clusters this list contains two IP addresses, one from IPv4
+	// family and one from IPv6.
+	// In single stack clusters a single IP address is expected.
+	// When omitted, values from the status.apiServerInternalIPs will be used.
+	// Once set, the list cannot be completely removed (but its second entry can).
+	APIServerInternalIPs []configv1.IP `json:"apiServerInternalIPs,omitempty"`
+	// ingressIPs are the external IPs which route to the default ingress
+	// controller. The IPs are suitable targets of a wildcard DNS record used to
+	// resolve default route host names.
+	// In dual stack clusters this list contains two IP addresses, one from IPv4
+	// family and one from IPv6.
+	// In single stack clusters a single IP address is expected.
+	// When omitted, values from the status.ingressIPs will be used.
+	// Once set, the list cannot be completely removed (but its second entry can).
+	IngressIPs []configv1.IP `json:"ingressIPs,omitempty"`
+	// machineNetworks are IP networks used to connect all the OpenShift cluster
+	// nodes. Each network is provided in the CIDR format and should be IPv4 or IPv6,
+	// for example "10.0.0.0/8" or "fd00::/8".
+	MachineNetworks []configv1.CIDR `json:"machineNetworks,omitempty"`
+	// maxAllowedAddressPairs is the maximum number of allowed address pairs
+	// configured in Neutron. When set, the value must be between 1 and 2,147,483,647
+	// inclusive. When omitted, it means there is no opinion and the platform will
+	// choose a reasonable default which is subject to change. Currently, the default
+	// value matches Neutron's default.
+	MaxAllowedAddressPairs *int32 `json:"maxAllowedAddressPairs,omitempty"`
 }
 
 // OpenStackPlatformSpecApplyConfiguration constructs a declarative configuration of the OpenStackPlatformSpec type for use with
@@ -47,5 +76,13 @@ func (b *OpenStackPlatformSpecApplyConfiguration) WithMachineNetworks(values ...
 	for i := range values {
 		b.MachineNetworks = append(b.MachineNetworks, values[i])
 	}
+	return b
+}
+
+// WithMaxAllowedAddressPairs sets the MaxAllowedAddressPairs field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the MaxAllowedAddressPairs field is set to the value of the last call.
+func (b *OpenStackPlatformSpecApplyConfiguration) WithMaxAllowedAddressPairs(value int32) *OpenStackPlatformSpecApplyConfiguration {
+	b.MaxAllowedAddressPairs = &value
 	return b
 }

@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"strconv"
 	"sync"
-	"sync/atomic"
 
 	"github.com/google/cel-go/cel"
 	"github.com/google/cel-go/checker"
@@ -31,9 +30,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/version"
 	celconfig "k8s.io/apiserver/pkg/apis/cel"
 	"k8s.io/apiserver/pkg/cel/library"
-	genericfeatures "k8s.io/apiserver/pkg/features"
 	"k8s.io/apiserver/pkg/util/compatibility"
-	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	basecompatibility "k8s.io/component-base/compatibility"
 )
 
@@ -57,9 +54,7 @@ func DefaultCompatibilityVersion() *version.Version {
 	return effectiveVer.MinCompatibilityVersion()
 }
 
-var baseOpts = append(baseOptsWithoutStrictCost, StrictCostOpt)
-
-var baseOptsWithoutStrictCost = []VersionedOptions{
+var baseOpts = []VersionedOptions{
 	{
 		// CEL epoch was actually 1.23, but we artificially set it to 1.0 because these
 		// options should always be present.
@@ -74,7 +69,6 @@ var baseOptsWithoutStrictCost = []VersionedOptions{
 
 			UnversionedLib(library.URLs),
 			UnversionedLib(library.Regex),
-			UnversionedLib(library.Lists),
 
 			// cel-go v0.17.7 change the cost of has() from 0 to 1, but also provided the CostEstimatorOptions option to preserve the old behavior, so we enabled it at the same time we bumped our cel version to v0.17.7.
 			// Since it is a regression fix, we apply it uniformly to all code use v0.17.7.
@@ -87,6 +81,13 @@ var baseOptsWithoutStrictCost = []VersionedOptions{
 			// cel-go v0.17.7 change the cost of has() from 0 to 1, but also provided the CostEstimatorOptions option to preserve the old behavior, so we enabled it at the same time we bumped our cel version to v0.17.7.
 			// Since it is a regression fix, we apply it uniformly to all code use v0.17.7.
 			cel.CostTrackerOptions(interpreter.PresenceTestHasCost(false)),
+		},
+	},
+	{
+		IntroducedVersion: version.MajorMinor(1, 0),
+		RemovedVersion:    version.MajorMinor(1, 37),
+		EnvOptions: []cel.EnvOption{
+			library.Lists(library.ListsVersion(0)),
 		},
 	},
 	{
@@ -153,18 +154,6 @@ var baseOptsWithoutStrictCost = []VersionedOptions{
 	// Authz selectors
 	{
 		IntroducedVersion: version.MajorMinor(1, 31),
-		FeatureEnabled: func() bool {
-			enabled := utilfeature.DefaultFeatureGate.Enabled(genericfeatures.AuthorizeWithSelectors)
-			authzSelectorsLibraryInit.Do(func() {
-				// Record the first time feature enablement was checked for this library.
-				// This is checked from integration tests to ensure no cached cel envs
-				// are constructed before feature enablement is effectively set.
-				authzSelectorsLibraryEnabled.Store(enabled)
-				// Uncomment to debug where the first initialization is coming from if needed.
-				// debug.PrintStack()
-			})
-			return enabled
-		},
 		EnvOptions: []cel.EnvOption{
 			UnversionedLib(library.AuthzSelectors),
 		},
@@ -183,19 +172,20 @@ var baseOptsWithoutStrictCost = []VersionedOptions{
 			library.SemverLib(library.SemverVersion(1)),
 		},
 	},
-}
-
-var (
-	authzSelectorsLibraryInit    sync.Once
-	authzSelectorsLibraryEnabled atomic.Value
-)
-
-// AuthzSelectorsLibraryEnabled returns whether the AuthzSelectors library was enabled when it was constructed.
-// If it has not been contructed yet, this returns `false, false`.
-// This is solely for the benefit of the integration tests making sure feature gates get correctly parsed before AuthzSelector ever has to check for enablement.
-func AuthzSelectorsLibraryEnabled() (enabled, constructed bool) {
-	enabled, constructed = authzSelectorsLibraryEnabled.Load().(bool)
-	return
+	// List library
+	{
+		IntroducedVersion: version.MajorMinor(1, 34),
+		EnvOptions: []cel.EnvOption{
+			ext.Lists(ext.ListsVersion(3)),
+		},
+	},
+	{
+		IntroducedVersion: version.MajorMinor(1, 37),
+		EnvOptions: []cel.EnvOption{
+			library.Lists(library.ListsVersion(1)),
+		},
+	},
+	StrictCostOpt,
 }
 
 var StrictCostOpt = VersionedOptions{
@@ -216,7 +206,6 @@ var cacheBaseEnvs = true
 func DisableBaseEnvSetCachingForTests() {
 	cacheBaseEnvs = false
 	baseEnvs.Clear()
-	baseEnvsWithOption.Clear()
 }
 
 // MustBaseEnvSet returns the common CEL base environments for Kubernetes for Version, or panics
@@ -228,8 +217,7 @@ func DisableBaseEnvSetCachingForTests() {
 // The returned environment contains no CEL variable definitions or custom type declarations and
 // should be extended to construct environments with the appropriate variable definitions,
 // type declarations and any other needed configuration.
-// strictCost is used to determine whether to enforce strict cost calculation for CEL expressions.
-func MustBaseEnvSet(ver *version.Version, strictCost bool) *EnvSet {
+func MustBaseEnvSet(ver *version.Version) *EnvSet {
 	if ver == nil {
 		panic("version must be non-nil")
 	}
@@ -238,38 +226,23 @@ func MustBaseEnvSet(ver *version.Version, strictCost bool) *EnvSet {
 	}
 	key := strconv.FormatUint(uint64(ver.Major()), 10) + "." + strconv.FormatUint(uint64(ver.Minor()), 10)
 	var entry interface{}
-	if strictCost {
-		if entry, ok := baseEnvs.Load(key); ok {
-			return entry.(*EnvSet)
-		}
-		entry, _, _ = baseEnvsSingleflight.Do(key, func() (interface{}, error) {
-			entry := mustNewEnvSet(ver, baseOpts)
-			if cacheBaseEnvs {
-				baseEnvs.Store(key, entry)
-			}
-			return entry, nil
-		})
-	} else {
-		if entry, ok := baseEnvsWithOption.Load(key); ok {
-			return entry.(*EnvSet)
-		}
-		entry, _, _ = baseEnvsWithOptionSingleflight.Do(key, func() (interface{}, error) {
-			entry := mustNewEnvSet(ver, baseOptsWithoutStrictCost)
-			if cacheBaseEnvs {
-				baseEnvsWithOption.Store(key, entry)
-			}
-			return entry, nil
-		})
+	if entry, ok := baseEnvs.Load(key); ok {
+		return entry.(*EnvSet)
 	}
+	entry, _, _ = baseEnvsSingleflight.Do(key, func() (interface{}, error) {
+		entry := mustNewEnvSet(ver, baseOpts)
+		if cacheBaseEnvs {
+			baseEnvs.Store(key, entry)
+		}
+		return entry, nil
+	})
 
 	return entry.(*EnvSet)
 }
 
 var (
-	baseEnvs                       = sync.Map{}
-	baseEnvsWithOption             = sync.Map{}
-	baseEnvsSingleflight           = &singleflight.Group{}
-	baseEnvsWithOptionSingleflight = &singleflight.Group{}
+	baseEnvs             = sync.Map{}
+	baseEnvsSingleflight = &singleflight.Group{}
 )
 
 // UnversionedLib wraps library initialization calls like ext.Sets() or library.IP()

@@ -8,6 +8,8 @@ type AuthenticationExpansion interface{}
 
 type BuildExpansion interface{}
 
+type CRIOCredentialProviderConfigExpansion interface{}
+
 type ClusterImagePolicyExpansion interface{}
 
 type ClusterOperatorExpansion interface{}
@@ -33,6 +35,8 @@ type ImageTagMirrorSetExpansion interface{}
 type InfrastructureExpansion interface{}
 
 type IngressExpansion interface{}
+
+type InsightsDataGatherExpansion interface{}
 
 type NetworkExpansion interface{}
 

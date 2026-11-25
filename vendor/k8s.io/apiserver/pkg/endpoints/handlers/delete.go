@@ -85,7 +85,7 @@ func DeleteResource(r rest.GracefulDeleter, allowsOptions bool, scope *RequestSc
 
 		options := &metav1.DeleteOptions{}
 		if allowsOptions {
-			body, err := limitedReadBodyWithRecordMetric(ctx, req, scope.MaxRequestBodyBytes, scope.Resource.GroupResource().String(), requestmetrics.Delete)
+			body, err := limitedReadBodyWithRecordMetric(ctx, req, scope.MaxRequestBodyBytes, scope.Resource.GroupResource(), requestmetrics.Delete)
 			if err != nil {
 				span.AddEvent("limitedReadBody failed", attribute.Int("len", len(body)), attribute.String("err", err.Error()))
 				scope.err(err, w, req)
@@ -103,11 +103,13 @@ func DeleteResource(r rest.GracefulDeleter, allowsOptions bool, scope *RequestSc
 				defaultGVK := scope.MetaGroupVersion.WithKind("DeleteOptions")
 				obj, gvk, err := apihelpers.GetMetaInternalVersionCodecs().DecoderToVersion(s.Serializer, defaultGVK.GroupVersion()).Decode(body, &defaultGVK, options)
 				if err != nil {
+					err = errors.NewBadRequest(err.Error())
 					scope.err(err, w, req)
 					return
 				}
 				if obj != options {
-					scope.err(fmt.Errorf("decoded object cannot be converted to DeleteOptions"), w, req)
+					err = errors.NewBadRequest("decoded object cannot be converted to DeleteOptions")
+					scope.err(err, w, req)
 					return
 				}
 				span.AddEvent("Decoded delete options")
@@ -260,7 +262,7 @@ func DeleteCollection(r rest.CollectionDeleter, checkBody bool, scope *RequestSc
 
 		options := &metav1.DeleteOptions{}
 		if checkBody {
-			body, err := limitedReadBodyWithRecordMetric(ctx, req, scope.MaxRequestBodyBytes, scope.Resource.GroupResource().String(), requestmetrics.DeleteCollection)
+			body, err := limitedReadBodyWithRecordMetric(ctx, req, scope.MaxRequestBodyBytes, scope.Resource.GroupResource(), requestmetrics.DeleteCollection)
 			if err != nil {
 				span.AddEvent("limitedReadBody failed", attribute.Int("len", len(body)), attribute.String("err", err.Error()))
 				scope.err(err, w, req)
@@ -278,11 +280,13 @@ func DeleteCollection(r rest.CollectionDeleter, checkBody bool, scope *RequestSc
 				defaultGVK := scope.MetaGroupVersion.WithKind("DeleteOptions")
 				obj, gvk, err := apihelpers.GetMetaInternalVersionCodecs().DecoderToVersion(s.Serializer, defaultGVK.GroupVersion()).Decode(body, &defaultGVK, options)
 				if err != nil {
+					err = errors.NewBadRequest(err.Error())
 					scope.err(err, w, req)
 					return
 				}
 				if obj != options {
-					scope.err(fmt.Errorf("decoded object cannot be converted to DeleteOptions"), w, req)
+					err = errors.NewBadRequest("decoded object cannot be converted to DeleteOptions")
+					scope.err(err, w, req)
 					return
 				}
 
@@ -350,7 +354,7 @@ func DeleteCollection(r rest.CollectionDeleter, checkBody bool, scope *RequestSc
 // authorizeUnsafeDelete ensures that the user has permission to do
 // 'unsafe-delete-ignore-read-errors' on the resource being deleted when
 // ignoreStoreReadErrorWithClusterBreakingPotential is enabled
-func authorizeUnsafeDelete(ctx context.Context, attr admission.Attributes, authz authorizer.Authorizer) (err error) {
+func authorizeUnsafeDelete(ctx context.Context, attr admission.Attributes, authz authorizer.UnconditionalAuthorizer) (err error) {
 	if attr.GetOperation() != admission.Delete || attr.GetOperationOptions() == nil {
 		return nil
 	}
@@ -385,25 +389,23 @@ func authorizeUnsafeDelete(ctx context.Context, attr admission.Attributes, authz
 	}
 	// TODO: can't use ResourceAttributesFrom from k8s.io/kubernetes/pkg/registry/authorization/util
 	// due to prevent staging --> k8s.io/kubernetes dep issue
-	if utilfeature.DefaultFeatureGate.Enabled(features.AuthorizeWithSelectors) {
-		if len(requestInfo.FieldSelector) > 0 {
-			fieldSelector, err := fields.ParseSelector(requestInfo.FieldSelector)
-			if err != nil {
-				record.FieldSelectorRequirements, record.FieldSelectorParsingErr = nil, err
-			} else {
-				if requirements := fieldSelector.Requirements(); len(requirements) > 0 {
-					record.FieldSelectorRequirements, record.FieldSelectorParsingErr = fieldSelector.Requirements(), nil
-				}
+	if len(requestInfo.FieldSelector) > 0 {
+		fieldSelector, err := fields.ParseSelector(requestInfo.FieldSelector)
+		if err != nil {
+			record.FieldSelectorRequirements, record.FieldSelectorParsingErr = nil, err
+		} else {
+			if requirements := fieldSelector.Requirements(); len(requirements) > 0 {
+				record.FieldSelectorRequirements, record.FieldSelectorParsingErr = fieldSelector.Requirements(), nil
 			}
 		}
-		if len(requestInfo.LabelSelector) > 0 {
-			labelSelector, err := labels.Parse(requestInfo.LabelSelector)
-			if err != nil {
-				record.LabelSelectorRequirements, record.LabelSelectorParsingErr = nil, err
-			} else {
-				if requirements, _ /*selectable*/ := labelSelector.Requirements(); len(requirements) > 0 {
-					record.LabelSelectorRequirements, record.LabelSelectorParsingErr = requirements, nil
-				}
+	}
+	if len(requestInfo.LabelSelector) > 0 {
+		labelSelector, err := labels.Parse(requestInfo.LabelSelector)
+		if err != nil {
+			record.LabelSelectorRequirements, record.LabelSelectorParsingErr = nil, err
+		} else {
+			if requirements, _ /*selectable*/ := labelSelector.Requirements(); len(requirements) > 0 {
+				record.LabelSelectorRequirements, record.LabelSelectorParsingErr = requirements, nil
 			}
 		}
 	}
@@ -411,7 +413,7 @@ func authorizeUnsafeDelete(ctx context.Context, attr admission.Attributes, authz
 	decision, reason, err := authz.Authorize(ctx, record)
 	if err != nil {
 		err = fmt.Errorf("error while checking permission for %q, %w", record.Verb, err)
-		klog.FromContext(ctx).V(1).Error(err, "failed to authorize")
+		klog.FromContext(ctx).V(1).Info("failed to authorize", "err", err)
 		return admission.NewForbidden(attr, err)
 	}
 	if decision == authorizer.DecisionAllow {

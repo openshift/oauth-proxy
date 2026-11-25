@@ -18,13 +18,15 @@ import (
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:path=clusterversions,scope=Cluster
-// +kubebuilder:validation:XValidation:rule="has(self.spec.capabilities) && has(self.spec.capabilities.additionalEnabledCapabilities) && self.spec.capabilities.baselineCapabilitySet == 'None' && 'marketplace' in self.spec.capabilities.additionalEnabledCapabilities ? 'OperatorLifecycleManager' in self.spec.capabilities.additionalEnabledCapabilities || (has(self.status) && has(self.status.capabilities) && has(self.status.capabilities.enabledCapabilities) && 'OperatorLifecycleManager' in self.status.capabilities.enabledCapabilities) : true",message="the `marketplace` capability requires the `OperatorLifecycleManager` capability, which is neither explicitly or implicitly enabled in this cluster, please enable the `OperatorLifecycleManager` capability"
+// +openshift:validation:FeatureGateAwareXValidation:featureGate="";CRDCompatibilityRequirementOperator,rule="has(self.spec.capabilities) && has(self.spec.capabilities.additionalEnabledCapabilities) && self.spec.capabilities.baselineCapabilitySet == 'None' && 'marketplace' in self.spec.capabilities.additionalEnabledCapabilities ? 'OperatorLifecycleManager' in self.spec.capabilities.additionalEnabledCapabilities || (has(self.status) && has(self.status.capabilities) && has(self.status.capabilities.enabledCapabilities) && 'OperatorLifecycleManager' in self.status.capabilities.enabledCapabilities) : true",message="the `marketplace` capability requires the `OperatorLifecycleManager` capability, which is neither explicitly or implicitly enabled in this cluster, please enable the `OperatorLifecycleManager` capability"
+// +openshift:validation:FeatureGateAwareXValidation:requiredFeatureGate=CRDCompatibilityRequirementOperator;ClusterAPIOperator,rule="has(self.spec.capabilities) && has(self.spec.capabilities.additionalEnabledCapabilities) && 'ClusterAPI' in self.spec.capabilities.additionalEnabledCapabilities ? 'CompatibilityRequirements' in self.spec.capabilities.additionalEnabledCapabilities || !has(self.spec.capabilities.baselineCapabilitySet) || self.spec.capabilities.baselineCapabilitySet == 'vCurrent' || (has(self.status) && has(self.status.capabilities) && has(self.status.capabilities.enabledCapabilities) && 'CompatibilityRequirements' in self.status.capabilities.enabledCapabilities) : true",message="the `ClusterAPI` capability requires the `CompatibilityRequirements` capability, which is neither explicitly or implicitly enabled in this cluster, please enable the `CompatibilityRequirements` capability"
 // +kubebuilder:printcolumn:name=Version,JSONPath=.status.history[?(@.state=="Completed")].version,type=string
 // +kubebuilder:printcolumn:name=Available,JSONPath=.status.conditions[?(@.type=="Available")].status,type=string
 // +kubebuilder:printcolumn:name=Progressing,JSONPath=.status.conditions[?(@.type=="Progressing")].status,type=string
 // +kubebuilder:printcolumn:name=Since,JSONPath=.status.conditions[?(@.type=="Progressing")].lastTransitionTime,type=date
 // +kubebuilder:printcolumn:name=Status,JSONPath=.status.conditions[?(@.type=="Progressing")].message,type=string
 // +kubebuilder:metadata:annotations=include.release.openshift.io/self-managed-high-availability=true
+// +kubebuilder:metadata:annotations=release.openshift.io/bootstrap-required=true
 type ClusterVersion struct {
 	metav1.TypeMeta `json:",inline"`
 
@@ -72,8 +74,10 @@ type ClusterVersionSpec struct {
 	//
 	// If an upgrade fails the operator will halt and report status
 	// about the failing component. Setting the desired update value back to
-	// the previous version will cause a rollback to be attempted. Not all
-	// rollbacks will succeed.
+	// the previous version will cause a rollback to be attempted if the
+	// previous version is within the current minor version. Not all
+	// rollbacks will succeed, and some may unrecoverably break the
+	// cluster.
 	//
 	// +optional
 	DesiredUpdate *Update `json:"desiredUpdate,omitempty"`
@@ -197,9 +201,23 @@ type ClusterVersionStatus struct {
 	// availableUpdates. This list may be empty if no updates are
 	// recommended, if the update service is unavailable, or if an empty
 	// or invalid channel has been specified.
+	// +kubebuilder:validation:MaxItems=500
 	// +listType=atomic
 	// +optional
 	ConditionalUpdates []ConditionalUpdate `json:"conditionalUpdates,omitempty"`
+
+	// conditionalUpdateRisks contains the list of risks associated with conditionalUpdates.
+	// When performing a conditional update, all its associated risks will be compared with the set of accepted risks in the spec.desiredUpdate.acceptRisks field.
+	// If all risks for a conditional update are included in the spec.desiredUpdate.acceptRisks set, the conditional update can proceed, otherwise it is blocked.
+	// The risk names in the list must be unique.
+	// conditionalUpdateRisks must not contain more than 500 entries.
+	// +openshift:enable:FeatureGate=ClusterUpdateAcceptRisks
+	// +kubebuilder:validation:MaxItems=500
+	// +kubebuilder:validation:MinItems=1
+	// +listType=map
+	// +listMapKey=name
+	// +optional
+	ConditionalUpdateRisks []ConditionalUpdateRisk `json:"conditionalUpdateRisks,omitempty"`
 }
 
 // UpdateState is a constant representing whether an update was successfully
@@ -256,8 +274,8 @@ type UpdateHistory struct {
 	Verified bool `json:"verified"`
 
 	// acceptedRisks records risks which were accepted to initiate the update.
-	// For example, it may menition an Upgradeable=False or missing signature
-	// that was overriden via desiredUpdate.force, or an update that was
+	// For example, it may mention an Upgradeable=False or missing signature
+	// that was overridden via desiredUpdate.force, or an update that was
 	// initiated despite not being in the availableUpdates set of recommended
 	// update targets.
 	// +optional
@@ -266,6 +284,16 @@ type UpdateHistory struct {
 
 // ClusterID is string RFC4122 uuid.
 type ClusterID string
+
+// UpdateMode defines how an update should be processed.
+// +enum
+// +kubebuilder:validation:Enum=Preflight
+type UpdateMode string
+
+const (
+	// UpdateModePreflight allows an update to be checked for compatibility without committing to updating the cluster.
+	UpdateModePreflight UpdateMode = "Preflight"
+)
 
 // ClusterVersionArchitecture enumerates valid cluster architectures.
 // +kubebuilder:validation:Enum="Multi";""
@@ -277,8 +305,20 @@ const (
 	ClusterVersionArchitectureMulti ClusterVersionArchitecture = "Multi"
 )
 
+// The FeatureGateAwareEnum markers below all write the same enum field, and the
+// generator keeps same-named markers in source order and applies the last one
+// that matches, so with several gates enabled the lowest marker wins. Keep the
+// markers ordered from fewest to most capabilities, with the combined
+// requiredFeatureGate marker last, so that the enum does not silently shrink
+// when more than one of these gates is enabled.
+// This comment is deliberately detached from the doc comment below: anything in
+// that block becomes the generated schema description.
+
 // ClusterVersionCapability enumerates optional, core cluster components.
-// +kubebuilder:validation:Enum=openshift-samples;baremetal;marketplace;Console;Insights;Storage;CSISnapshot;NodeTuning;MachineAPI;Build;DeploymentConfig;ImageRegistry;OperatorLifecycleManager;CloudCredential;Ingress;CloudControllerManager;OperatorLifecycleManagerV1
+// +openshift:validation:FeatureGateAwareEnum:featureGate="",enum=openshift-samples;baremetal;marketplace;Console;Insights;Storage;CSISnapshot;NodeTuning;MachineAPI;Build;DeploymentConfig;ImageRegistry;OperatorLifecycleManager;CloudCredential;Ingress;CloudControllerManager;OperatorLifecycleManagerV1
+// +openshift:validation:FeatureGateAwareEnum:featureGate=CRDCompatibilityRequirementOperator,enum=openshift-samples;baremetal;marketplace;Console;Insights;Storage;CSISnapshot;NodeTuning;MachineAPI;Build;DeploymentConfig;ImageRegistry;OperatorLifecycleManager;CloudCredential;Ingress;CloudControllerManager;OperatorLifecycleManagerV1;CompatibilityRequirements
+// +openshift:validation:FeatureGateAwareEnum:featureGate=ClusterAPIOperator,enum=openshift-samples;baremetal;marketplace;Console;Insights;Storage;CSISnapshot;NodeTuning;MachineAPI;Build;DeploymentConfig;ImageRegistry;OperatorLifecycleManager;CloudCredential;Ingress;CloudControllerManager;OperatorLifecycleManagerV1;ClusterAPI
+// +openshift:validation:FeatureGateAwareEnum:requiredFeatureGate=CRDCompatibilityRequirementOperator;ClusterAPIOperator,enum=openshift-samples;baremetal;marketplace;Console;Insights;Storage;CSISnapshot;NodeTuning;MachineAPI;Build;DeploymentConfig;ImageRegistry;OperatorLifecycleManager;CloudCredential;Ingress;CloudControllerManager;OperatorLifecycleManagerV1;CompatibilityRequirements;ClusterAPI
 type ClusterVersionCapability string
 
 const (
@@ -399,6 +439,19 @@ const (
 	// Managers deployed on top of OpenShift. They help you to work with cloud
 	// provider API and embeds cloud-specific control logic.
 	ClusterVersionCapabilityCloudControllerManager ClusterVersionCapability = "CloudControllerManager"
+
+	// ClusterVersionCapabilityCompatibilityRequirements manages the Compatibility
+	// Requirements operator which enforces CRD compatibility constraints via
+	// validating webhooks.
+	ClusterVersionCapabilityCompatibilityRequirements ClusterVersionCapability = "CompatibilityRequirements"
+
+	// ClusterVersionCapabilityClusterAPI manages the Cluster API operator and
+	// controllers which provide forward-compatible machine management for
+	// OpenShift clusters.
+	//
+	// Note that Cluster API has a hard requirement on CompatibilityRequirements.
+	// CompatibilityRequirements cannot be disabled while Cluster API is enabled.
+	ClusterVersionCapabilityClusterAPI ClusterVersionCapability = "ClusterAPI"
 )
 
 // KnownClusterVersionCapabilities includes all known optional, core cluster components.
@@ -420,6 +473,8 @@ var KnownClusterVersionCapabilities = []ClusterVersionCapability{
 	ClusterVersionCapabilityCloudCredential,
 	ClusterVersionCapabilityIngress,
 	ClusterVersionCapabilityCloudControllerManager,
+	ClusterVersionCapabilityCompatibilityRequirements,
+	ClusterVersionCapabilityClusterAPI,
 }
 
 // ClusterVersionCapabilitySet defines sets of cluster version capabilities.
@@ -618,12 +673,15 @@ var ClusterVersionCapabilitySets = map[ClusterVersionCapabilitySet][]ClusterVers
 		ClusterVersionCapabilityCloudCredential,
 		ClusterVersionCapabilityIngress,
 		ClusterVersionCapabilityCloudControllerManager,
+		ClusterVersionCapabilityCompatibilityRequirements,
+		ClusterVersionCapabilityClusterAPI,
 	},
 }
 
 // ClusterVersionCapabilitiesSpec selects the managed set of
 // optional, core cluster components.
 // +k8s:deepcopy-gen=true
+// +openshift:validation:FeatureGateAwareXValidation:featureGate=ClusterAPIOperator,rule="!has(self.baselineCapabilitySet) || size(self.baselineCapabilitySet) == 0 || self.baselineCapabilitySet == 'vCurrent' || (self.baselineCapabilitySet == 'None' && (!has(self.additionalEnabledCapabilities) || !('MachineAPI' in self.additionalEnabledCapabilities))) || (has(self.additionalEnabledCapabilities) && 'ClusterAPI' in self.additionalEnabledCapabilities)",message="the MachineAPI capability requires the ClusterAPI capability"
 type ClusterVersionCapabilitiesSpec struct {
 	// baselineCapabilitySet selects an initial set of
 	// optional capabilities to enable, which can be extended via
@@ -718,14 +776,58 @@ type Update struct {
 	Image string `json:"image"`
 
 	// force allows an administrator to update to an image that has failed
-	// verification or upgradeable checks. This option should only
-	// be used when the authenticity of the provided image has been verified out
-	// of band because the provided image will run with full administrative access
-	// to the cluster. Do not use this flag with images that comes from unknown
+	// verification or upgradeable checks that are designed to keep your
+	// cluster safe. Only use this if:
+	// * you are testing unsigned release images in short-lived test clusters or
+	// * you are working around a known bug in the cluster-version
+	//   operator and you have verified the authenticity of the provided
+	//   image yourself.
+	// The provided image will run with full administrative access
+	// to the cluster. Do not use this flag with images that come from unknown
 	// or potentially malicious sources.
 	//
 	// +optional
 	Force bool `json:"force"`
+
+	// acceptRisks is an optional set of names of conditional update risks that are considered acceptable.
+	// A conditional update is performed only if all of its risks are acceptable.
+	// This list may contain entries that apply to current, previous or future updates.
+	// The entries therefore may not map directly to a risk in .status.conditionalUpdateRisks.
+	// acceptRisks must not contain more than 1000 entries.
+	// Entries in this list must be unique.
+	// +openshift:enable:FeatureGate=ClusterUpdateAcceptRisks
+	// +kubebuilder:validation:MaxItems=1000
+	// +kubebuilder:validation:MinItems=1
+	// +listType=map
+	// +listMapKey=name
+	// +optional
+	AcceptRisks []AcceptRisk `json:"acceptRisks,omitempty"`
+
+	// mode determines how an update should be processed.
+	// The only valid value is "Preflight".
+	// When omitted, the cluster performs a normal update by applying the specified version or image to the cluster.
+	// This is the standard update behavior.
+	// When set to "Preflight", the cluster runs compatibility checks against the target release without
+	// performing an actual update. Compatibility results, including any detected risks, are reported
+	// in status.conditionalUpdates and status.conditionalUpdateRisks alongside risks from the update
+	// recommendation service.
+	// This allows administrators to assess update readiness and address issues before committing to the update.
+	// Preflight mode is particularly useful for skip-level updates where upgrade compatibility needs to be
+	// verified across multiple minor versions.
+	// When mode is set to "Preflight", the same rules for version, image, and architecture apply as for normal updates.
+	// +openshift:enable:FeatureGate=ClusterUpdatePreflight
+	// +optional
+	Mode UpdateMode `json:"mode,omitempty"`
+}
+
+// AcceptRisk represents a risk that is considered acceptable.
+type AcceptRisk struct {
+	// name is the name of the acceptable risk.
+	// It must be a non-empty string and must not exceed 256 characters.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=256
+	// +required
+	Name string `json:"name,omitempty"`
 }
 
 // Release represents an OpenShift release image and associated metadata.
@@ -737,7 +839,6 @@ type Release struct {
 	// architecture.
 	// Valid values are 'Multi' and empty.
 	//
-	// +openshift:enable:FeatureGate=ImageStreamImportMode
 	// +optional
 	Architecture ClusterVersionArchitecture `json:"architecture,omitempty"`
 
@@ -781,12 +882,27 @@ type ConditionalUpdate struct {
 	// +required
 	Release Release `json:"release"`
 
+	// riskNames represents the set of the names of conditionalUpdateRisks that are relevant to this update for some clusters.
+	// The Applies condition of each conditionalUpdateRisks entry declares if that risk applies to this cluster.
+	// A conditional update is accepted only if each of its risks either does not apply to the cluster or is considered acceptable by the cluster administrator.
+	// The latter means that the risk names are included in value of the spec.desiredUpdate.acceptRisks field.
+	// Entries must be unique and must not exceed 256 characters.
+	// riskNames must not contain more than 500 entries.
+	// +openshift:enable:FeatureGate=ClusterUpdateAcceptRisks
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:items:MaxLength=256
+	// +kubebuilder:validation:MaxItems=500
+	// +listType=set
+	// +optional
+	RiskNames []string `json:"riskNames,omitempty"`
+
 	// risks represents the range of issues associated with
 	// updating to the target release. The cluster-version
 	// operator will evaluate all entries, and only recommend the
 	// update if there is at least one entry and all entries
 	// recommend the update.
 	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=200
 	// +patchMergeKey=name
 	// +patchStrategy=merge
 	// +listType=map
@@ -807,6 +923,20 @@ type ConditionalUpdate struct {
 // for not recommending a conditional update.
 // +k8s:deepcopy-gen=true
 type ConditionalUpdateRisk struct {
+	// conditions represents the observations of the conditional update
+	// risk's current status. Known types are:
+	// * Applies, for whether the risk applies to the current cluster.
+	// The condition's types in the list must be unique.
+	// conditions must not contain more than one entry.
+	// +openshift:enable:FeatureGate=ClusterUpdateAcceptRisks
+	// +kubebuilder:validation:XValidation:rule="self.exists_one(x, x.type == 'Applies')",message="must contain a condition of type 'Applies'"
+	// +kubebuilder:validation:MaxItems=8
+	// +kubebuilder:validation:MinItems=1
+	// +listType=map
+	// +listMapKey=type
+	// +optional
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
+
 	// url contains information about this risk.
 	// +kubebuilder:validation:Format=uri
 	// +kubebuilder:validation:MinLength=1
