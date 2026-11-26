@@ -19,6 +19,8 @@ package storage
 import (
 	"context"
 	"fmt"
+	"strings"
+	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -33,8 +35,14 @@ import (
 // Feature is the name of each feature in storage that we check in feature_support_checker.
 type Feature = string
 
-// RequestWatchProgress is an etcd feature that may use to check if it supported or not.
+// RequestWatchProgress is an etcd feature for progress notification requests.
+// Default: false.
 var RequestWatchProgress Feature = "RequestWatchProgress"
+
+// RangeStream is an etcd feature (etcd 3.7+) for the streaming list RPC.
+// Default: true. MarkUnsupported flips it to false on an Unimplemented response,
+// reverting to true after a recheck interval.
+var RangeStream Feature = "RangeStream"
 
 // Versioner abstracts setting and retrieving metadata fields from database response
 // onto the object ot list. It is required to maintain storage invariants - updating an
@@ -243,8 +251,8 @@ type Interface interface {
 		ctx context.Context, key string, destination runtime.Object, ignoreNotFound bool,
 		preconditions *Preconditions, tryUpdate UpdateFunc, cachedExistingObject runtime.Object) error
 
-	// Count returns number of different entries under the key (generally being path prefix).
-	Count(key string) (int64, error)
+	// Stats returns storage stats.
+	Stats(ctx context.Context) (Stats, error)
 
 	// ReadinessCheck checks if the storage is ready for accepting requests.
 	ReadinessCheck() error
@@ -267,7 +275,18 @@ type Interface interface {
 	// GetCurrentResourceVersion gets the current resource version from etcd.
 	// This method issues an empty list request and reads only the ResourceVersion from the object metadata
 	GetCurrentResourceVersion(ctx context.Context) (uint64, error)
+
+	// EnableResourceSizeEstimation enables estimating resource size by providing function get keys from storage.
+	EnableResourceSizeEstimation(KeysFunc) error
+
+	// CompactRevision returns latest observed revision that was compacted.
+	// Without ListFromCacheSnapshot enabled only locally executed compaction will be observed.
+	// Returns 0 if no compaction was yet observed.
+	CompactRevision() int64
 }
+
+// KeysFunc is a function prototype to fetch keys from storage.
+type KeysFunc func(context.Context) ([]string, error)
 
 // GetOptions provides the options that may be provided for storage get operations.
 type GetOptions struct {
@@ -318,17 +337,35 @@ type ListOptions struct {
 	// event containing a ResourceVersion after which the server
 	// continues streaming events.
 	SendInitialEvents *bool
+	// RecordTimestamps requests that the storage layer wrap each emitted watch
+	// object in a WatchEventWithRecordTime carrying its decode timestamp, for dispatch
+	// latency telemetry. This is intended for internal clients only (the watch
+	// cache); external clients cannot set it. The watch cache strips the wrapper
+	// before storing or serializing the object, so it never reaches other watchers.
+	RecordTimestamps bool
+}
+
+// WatchEventWithRecordTime wraps a runtime.Object with the timestamp at which the
+// storage layer decoded the corresponding watch event. It is produced by the
+// storage layer only when ListOptions.RecordTimestamps is set, and is consumed
+// and stripped by the watch cache before the underlying object is stored or
+// serialized. It is never sent to watch clients.
+type WatchEventWithRecordTime interface {
+	runtime.Object
+	// RecordTime returns the decode timestamp of the wrapped event.
+	RecordTime() time.Time
+	// Unwrap returns the underlying object.
+	Unwrap() runtime.Object
 }
 
 // DeleteOptions provides the options that may be provided for storage delete operations.
 type DeleteOptions struct {
-	// IgnoreStoreReadError, if enabled, will ignore store read error
-	// such as transformation or decode failure and go ahead with the
-	// deletion of the object.
+	// ExpectTransformOrDecodeError, if enabled, will return an error if the object can be
+	// transformed and decoded.
 	// NOTE: for normal deletion flow it should always be false, it may be
 	// enabled by the caller only to facilitate unsafe deletion of corrupt
 	// object which otherwise can not be deleted using the normal flow
-	IgnoreStoreReadError bool
+	ExpectTransformOrDecodeError bool
 }
 
 func ValidateListOptions(keyPrefix string, versioner Versioner, opts ListOptions) (withRev int64, continueKey string, err error) {
@@ -369,4 +406,42 @@ func ValidateListOptions(keyPrefix string, versioner Versioner, opts ListOptions
 		return withRev, "", fmt.Errorf("unknown ResourceVersionMatch value: %v", opts.ResourceVersionMatch)
 	}
 	return withRev, "", nil
+}
+
+// Stats provides statistics information about storage.
+type Stats struct {
+	// ObjectCount informs about number of objects stored in the storage.
+	ObjectCount int64
+	// EstimatedAverageObjectSizeBytes informs about size of objects stored in the storage, based on size of serialized values.
+	// Value is an estimate, meaning it doesn't need to provide accurate nor consistent.
+	EstimatedAverageObjectSizeBytes int64
+}
+
+func PrepareKey(resourcePrefix, key string, recursive bool) (string, error) {
+	if key == ".." ||
+		strings.HasPrefix(key, "../") ||
+		strings.HasSuffix(key, "/..") ||
+		strings.Contains(key, "/../") {
+		return "", fmt.Errorf("invalid key: %q", key)
+	}
+	if key == "." ||
+		strings.HasPrefix(key, "./") ||
+		strings.HasSuffix(key, "/.") ||
+		strings.Contains(key, "/./") {
+		return "", fmt.Errorf("invalid key: %q", key)
+	}
+	if key == "" || key == "/" {
+		return "", fmt.Errorf("empty key: %q", key)
+	}
+	// For recursive requests, we need to make sure the key ended with "/" so that we only
+	// get children "directories". e.g. if we have key "/a", "/a/b", "/ab", getting keys
+	// with prefix "/a" will return all three, while with prefix "/a/" will return only
+	// "/a/b" which is the correct answer.
+	if recursive && !strings.HasSuffix(key, "/") {
+		key += "/"
+	}
+	if !strings.HasPrefix(key, resourcePrefix) {
+		return "", fmt.Errorf("invalid key: %q lacks resource prefix: %q", key, resourcePrefix)
+	}
+	return key, nil
 }

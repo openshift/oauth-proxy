@@ -49,13 +49,16 @@ import (
 	discoveryendpoint "k8s.io/apiserver/pkg/endpoints/discovery/aggregated"
 	"k8s.io/apiserver/pkg/features"
 	"k8s.io/apiserver/pkg/registry/rest"
+	"k8s.io/apiserver/pkg/server/flagz"
 	"k8s.io/apiserver/pkg/server/healthz"
 	"k8s.io/apiserver/pkg/server/routes"
+	"k8s.io/apiserver/pkg/server/statusz"
 	"k8s.io/apiserver/pkg/storageversion"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	restclient "k8s.io/client-go/rest"
 	basecompatibility "k8s.io/component-base/compatibility"
 	"k8s.io/component-base/featuregate"
+	zpagesfeatures "k8s.io/component-base/zpages/features"
 	"k8s.io/klog/v2"
 	openapibuilder3 "k8s.io/kube-openapi/pkg/builder3"
 	openapicommon "k8s.io/kube-openapi/pkg/common"
@@ -111,6 +114,9 @@ type GenericAPIServer struct {
 	// LoopbackClientConfig is a config for a privileged loopback connection to the API server
 	LoopbackClientConfig *restclient.Config
 
+	// Flagz is used to set up flagz endpoint.
+	Flagz flagz.Reader
+
 	// minRequestTimeout is how short the request timeout can be.  This is used to build the RESTHandler
 	minRequestTimeout time.Duration
 
@@ -152,6 +158,9 @@ type GenericAPIServer struct {
 
 	// AggregatedDiscoveryGroupManager serves /apis in an aggregated form.
 	AggregatedDiscoveryGroupManager discoveryendpoint.ResourceManager
+
+	// PeerAggregatedDiscoveryManager serves /apis aggregated from all peer apiservers.
+	PeerAggregatedDiscoveryManager discoveryendpoint.PeerAggregatedResourceManager
 
 	// AggregatedLegacyDiscoveryGroupManager serves /api in an aggregated form.
 	AggregatedLegacyDiscoveryGroupManager discoveryendpoint.ResourceManager
@@ -205,7 +214,7 @@ type GenericAPIServer struct {
 	// Authorizer determines whether a user is allowed to make a certain request. The Handler does a preliminary
 	// authorization check using the request URI but it may be necessary to make additional checks, such as in
 	// the create-on-update case
-	Authorizer authorizer.Authorizer
+	Authorizer authorizer.UnconditionalAuthorizer
 
 	// EquivalentResourceRegistry provides information about resources equivalent to a given resource,
 	// and the kind associated with a given resource. As resources are installed, they are registered here.
@@ -458,6 +467,17 @@ func (s *GenericAPIServer) PrepareRun() preparedGenericAPIServer {
 	}
 	s.installReadyz()
 
+	componentName := "apiserver"
+	if utilfeature.DefaultFeatureGate.Enabled(zpagesfeatures.ComponentFlagz) {
+		if s.Flagz != nil {
+			flagz.Install(s.Handler.NonGoRestfulMux, componentName, s.Flagz)
+		}
+	}
+	// statusz is installed last so that it can list all the paths that have been registered
+	if utilfeature.DefaultFeatureGate.Enabled(zpagesfeatures.ComponentStatusz) {
+		statusz.Install(s.Handler.NonGoRestfulMux, componentName, statusz.NewRegistry(s.EffectiveVersion, statusz.WithListedPaths(s.ListedPaths())))
+	}
+
 	return preparedGenericAPIServer{s}
 }
 
@@ -524,8 +544,8 @@ func (s preparedGenericAPIServer) RunWithContext(ctx context.Context) error {
 	// If UDS profiling is enabled, start a local http server listening on that socket
 	if s.UnprotectedDebugSocket != nil {
 		go func() {
-			defer utilruntime.HandleCrash()
-			klog.Error(s.UnprotectedDebugSocket.Run(stopCh))
+			defer utilruntime.HandleCrashWithContext(ctx)
+			klog.Error(s.UnprotectedDebugSocket.RunWithContext(ctx))
 		}()
 	}
 
@@ -853,7 +873,8 @@ func (s *GenericAPIServer) InstallLegacyAPIGroup(apiPrefix string, apiGroupInfo 
 	// Install the version handler.
 	// Add a handler at /<apiPrefix> to enumerate the supported api versions.
 	legacyRootAPIHandler := discovery.NewLegacyRootAPIHandler(s.discoveryAddresses, s.Serializer, apiPrefix)
-	wrapped := discoveryendpoint.WrapAggregatedDiscoveryToHandler(legacyRootAPIHandler, s.AggregatedLegacyDiscoveryGroupManager)
+	// No peer-to-peer discovery for legacy API group.
+	wrapped := discoveryendpoint.WrapAggregatedDiscoveryToHandler(legacyRootAPIHandler, s.AggregatedLegacyDiscoveryGroupManager, s.AggregatedLegacyDiscoveryGroupManager)
 	s.Handler.GoRestfulContainer.Add(wrapped.GenerateWebService("/api", metav1.APIVersions{}))
 	s.registerStorageReadinessCheck("", apiGroupInfo)
 
@@ -996,15 +1017,12 @@ func (s *GenericAPIServer) newAPIGroupVersion(apiGroupInfo *APIGroupInfo, groupV
 // NewDefaultAPIGroupInfo returns an APIGroupInfo stubbed with "normal" values
 // exposed for easier composition from other packages
 func NewDefaultAPIGroupInfo(group string, scheme *runtime.Scheme, parameterCodec runtime.ParameterCodec, codecs serializer.CodecFactory) APIGroupInfo {
-	opts := []serializer.CodecFactoryOptionsMutator{}
+	opts := []serializer.CodecFactoryOptionsMutator{
+		serializer.WithStreamingCollectionEncodingToJSON(),
+		serializer.WithStreamingCollectionEncodingToProtobuf(),
+	}
 	if utilfeature.DefaultFeatureGate.Enabled(features.CBORServingAndStorage) {
 		opts = append(opts, serializer.WithSerializer(cbor.NewSerializerInfo))
-	}
-	if utilfeature.DefaultFeatureGate.Enabled(features.StreamingCollectionEncodingToJSON) {
-		opts = append(opts, serializer.WithStreamingCollectionEncodingToJSON())
-	}
-	if utilfeature.DefaultFeatureGate.Enabled(features.StreamingCollectionEncodingToProtobuf) {
-		opts = append(opts, serializer.WithStreamingCollectionEncodingToProtobuf())
 	}
 	if len(opts) != 0 {
 		codecs = serializer.NewCodecFactory(scheme, opts...)

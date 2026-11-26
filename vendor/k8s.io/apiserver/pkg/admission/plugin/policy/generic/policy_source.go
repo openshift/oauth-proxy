@@ -47,6 +47,7 @@ import (
 const policyRefreshIntervalDefault = 1 * time.Second
 
 var policyRefreshInterval = policyRefreshIntervalDefault
+var policyRefreshIntervalLock sync.Mutex
 
 type policySource[P runtime.Object, B runtime.Object, E Evaluator] struct {
 	ctx                context.Context
@@ -98,6 +99,11 @@ type PolicyHook[P runtime.Object, B runtime.Object, E Evaluator] struct {
 	ParamInformer informers.GenericInformer
 	ParamScope    meta.RESTScope
 
+	// DynamicClient is used for direct API calls to handle cache misses
+	DynamicClient dynamic.Interface
+	// RESTMapper is used to resolve GVK to GVR for direct API calls
+	RESTMapper meta.RESTMapper
+
 	Evaluator          E
 	ConfigurationError error
 }
@@ -132,8 +138,12 @@ func NewPolicySource[P runtime.Object, B runtime.Object, E Evaluator](
 // SetPolicyRefreshIntervalForTests allows the refresh interval to be overridden during tests.
 // This should only be called from tests.
 func SetPolicyRefreshIntervalForTests(interval time.Duration) func() {
+	policyRefreshIntervalLock.Lock()
+	defer policyRefreshIntervalLock.Unlock()
 	policyRefreshInterval = interval
 	return func() {
+		policyRefreshIntervalLock.Lock()
+		defer policyRefreshIntervalLock.Unlock()
 		policyRefreshInterval = policyRefreshIntervalDefault
 	}
 }
@@ -145,7 +155,7 @@ func (s *policySource[P, B, E]) Run(ctx context.Context) error {
 
 	// Wait for initial cache sync of policies and informers before reconciling
 	// any
-	if !cache.WaitForNamedCacheSync(fmt.Sprintf("%T", s), ctx.Done(), s.UpstreamHasSynced) {
+	if !cache.WaitForNamedCacheSyncWithContext(ctx, s.UpstreamHasSynced) {
 		err := ctx.Err()
 		if err == nil {
 			err = fmt.Errorf("initial cache sync for %T failed", s)
@@ -194,7 +204,10 @@ func (s *policySource[P, B, E]) Run(ctx context.Context) error {
 	// and needs to be recompiled
 	go func() {
 		// Loop every 1 second until context is cancelled, refreshing policies
-		wait.Until(s.refreshPolicies, policyRefreshInterval, ctx.Done())
+		policyRefreshIntervalLock.Lock()
+		interval := policyRefreshInterval
+		policyRefreshIntervalLock.Unlock()
+		wait.Until(s.refreshPolicies, interval, ctx.Done())
 	}()
 
 	<-ctx.Done()
@@ -344,6 +357,8 @@ func (s *policySource[P, B, E]) calculatePolicyData() ([]PolicyHook[P, B, E], er
 			Evaluator:          s.compilePolicyLocked(policySpec),
 			ParamInformer:      paramInformer,
 			ParamScope:         paramScope,
+			DynamicClient:      s.dynamicClient,
+			RESTMapper:         s.restMapper,
 			ConfigurationError: configurationError,
 		})
 

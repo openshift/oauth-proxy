@@ -61,6 +61,15 @@ type ServingInfo struct {
 	// cipherSuites contains an overridden list of ciphers for the server to support.
 	// Values must match cipher suite IDs from https://golang.org/pkg/crypto/tls/#pkg-constants
 	CipherSuites []string `json:"cipherSuites,omitempty"`
+	// curvePreferences contains the allowed TLS key-exchange groups for the server.
+	// Values must match curve IDs from https://golang.org/pkg/crypto/tls/#pkg-constants.
+	// When omitted, the Go TLS implementation uses its default curve set.
+	// +kubebuilder:validation:MaxItems=7
+	// +kubebuilder:validation:MinItems=1
+	// +listType=atomic
+	// +optional
+	// +openshift:enable:FeatureGate=TLSGroupPreferences
+	CurvePreferences []int32 `json:"curvePreferences,omitempty"`
 }
 
 // CertInfo relates a certificate with a private key
@@ -284,7 +293,12 @@ type ClientConnectionOverrides struct {
 }
 
 // GenericControllerConfig provides information to configure a controller
+//
+// Compatibility level 1: Stable within a major release for a minimum of 12 months or 3 minor releases (whichever is longer).
+// +openshift:compatibility-gen:level=1
 type GenericControllerConfig struct {
+	metav1.TypeMeta `json:",inline"`
+
 	// servingInfo is the HTTP serving information for the controller's endpoints
 	ServingInfo HTTPServingInfo `json:"servingInfo"`
 
@@ -323,6 +337,7 @@ type RequiredHSTSPolicy struct {
 	// foo.com only matches foo.com, so to cover foo.com and everything under it, you must specify *both*.
 	// +kubebuilder:validation:MinItems=1
 	// +required
+	// +listType=atomic
 	DomainPatterns []string `json:"domainPatterns"`
 
 	// maxAge is the delta time range in seconds during which hosts are regarded as HSTS hosts.
@@ -398,7 +413,7 @@ const (
 
 // IBMCloudServiceName contains a value specifying the name of an IBM Cloud Service,
 // which are used by MAPI, CIRO, CIO, Installer, etc.
-// +kubebuilder:validation:Enum=CIS;COS;COSConfig;DNSServices;GlobalCatalog;GlobalSearch;GlobalTagging;HyperProtect;IAM;KeyProtect;ResourceController;ResourceManager;VPC
+// +kubebuilder:validation:Enum=CIS;COS;COSConfig;DNSServices;GlobalCatalog;GlobalSearch;GlobalTagging;HyperProtect;IAM;KeyProtect;ResourceController;ResourceManager;VPC;TransitGateway;PowerVS
 type IBMCloudServiceName string
 
 const (
@@ -428,4 +443,8 @@ const (
 	IBMCloudServiceResourceManager IBMCloudServiceName = "ResourceManager"
 	// IBMCloudServiceVPC is the name for IBM Cloud VPC.
 	IBMCloudServiceVPC IBMCloudServiceName = "VPC"
+	// IBMCloudServiceTransitGateway is the name for IBM Cloud Transit Gateway.
+	IBMCloudServiceTransitGateway IBMCloudServiceName = "TransitGateway"
+	// IBMCloudServicePowerVS is the name for IBM Cloud Power Virtual Server.
+	IBMCloudServicePowerVS IBMCloudServiceName = "PowerVS"
 )

@@ -101,6 +101,14 @@ func (mock *mockAuthorizer) Authorize(ctx context.Context, record authorizer.Att
 	return authorizer.DecisionAllow, "", nil
 }
 
+func (mock *mockAuthorizer) ConditionsAwareAuthorize(ctx context.Context, attrs authorizer.Attributes) authorizer.ConditionsAwareDecision {
+	return authorizer.ConditionsAwareDecisionFromParts(mock.Authorize(ctx, attrs))
+}
+
+func (*mockAuthorizer) EvaluateConditions(_ context.Context, _ authorizer.ConditionsAwareDecision, _ authorizer.ConditionsData) (authorizer.Decision, string, error) {
+	return authorizer.DecisionDeny, "", authorizer.ErrorConditionEvaluationNotSupported
+}
+
 func TestPassOAuthToken(t *testing.T) {
 	req, _ := http.NewRequest("GET", "/someurl", nil)
 	req.Header.Set("Authorization", "Bearer this-is-the-token")

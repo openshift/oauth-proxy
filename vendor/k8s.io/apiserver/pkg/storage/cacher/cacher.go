@@ -36,6 +36,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/apiserver/pkg/audit"
@@ -43,15 +44,16 @@ import (
 	"k8s.io/apiserver/pkg/features"
 	"k8s.io/apiserver/pkg/storage"
 	"k8s.io/apiserver/pkg/storage/cacher/delegator"
+	"k8s.io/apiserver/pkg/storage/cacher/key"
 	"k8s.io/apiserver/pkg/storage/cacher/metrics"
 	"k8s.io/apiserver/pkg/storage/cacher/progress"
+	"k8s.io/apiserver/pkg/storage/cacher/store"
 	etcdfeature "k8s.io/apiserver/pkg/storage/feature"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/component-base/tracing"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/clock"
-	"k8s.io/utils/ptr"
 )
 
 var (
@@ -247,7 +249,7 @@ func (t *watcherBookmarkTimeBuckets) popExpiredWatchersThreadUnsafe() [][]*cache
 	return expiredWatchers
 }
 
-type filterWithAttrsFunc func(key string, l labels.Set, f fields.Set) bool
+type filterWithAttrsFunc func(key string, l labels.Set, f fields.Set, obj runtime.Object) bool
 
 type indexedTriggerFunc struct {
 	indexName   string
@@ -339,6 +341,8 @@ type Cacher struct {
 	bookmarkWatchers *watcherBookmarkTimeBuckets
 	// expiredBookmarkWatchers is a list of watchers that were expired and need to be schedule for a next bookmark event
 	expiredBookmarkWatchers []*cacheWatcher
+	compactor               *compactor
+	watcherMetrics          *metrics.WatcherMetricsObservers
 }
 
 // NewCacherFromConfig creates a new Cacher responsible for servicing WATCH and LIST requests from
@@ -374,8 +378,18 @@ func NewCacherFromConfig(config Config) (*Cacher, error) {
 		config.Clock = clock.RealClock{}
 	}
 	objType := reflect.TypeOf(obj)
+	resourcePrefix := config.ResourcePrefix
+	if resourcePrefix == "" {
+		return nil, fmt.Errorf("resourcePrefix cannot be empty")
+	}
+	if resourcePrefix == "/" {
+		return nil, fmt.Errorf("resourcePrefix cannot be /")
+	}
+	if !strings.HasPrefix(resourcePrefix, "/") {
+		return nil, fmt.Errorf("resourcePrefix needs to start from /")
+	}
 	cacher := &Cacher{
-		resourcePrefix: config.ResourcePrefix,
+		resourcePrefix: resourcePrefix,
 		ready:          newReady(config.Clock),
 		storage:        config.Storage,
 		objectType:     objType,
@@ -401,6 +415,7 @@ func NewCacherFromConfig(config Config) (*Cacher, error) {
 		clock:            config.Clock,
 		timer:            time.NewTimer(time.Duration(0)),
 		bookmarkWatchers: newTimeBucketWatchers(config.Clock, defaultBookmarkFrequency),
+		watcherMetrics:   metrics.NewWatcherMetricsObservers(config.GroupResource),
 	}
 
 	// Ensure that timer is stopped.
@@ -425,11 +440,11 @@ func NewCacherFromConfig(config Config) (*Cacher, error) {
 	progressRequester := progress.NewConditionalProgressRequester(config.Storage.RequestWatchProgress, config.Clock, contextMetadata)
 	watchCache := newWatchCache(
 		config.KeyFunc, cacher.processEvent, config.GetAttrsFunc, config.Versioner, config.Indexers,
-		config.Clock, eventFreshDuration, config.GroupResource, progressRequester)
-	listerWatcher := NewListerWatcher(config.Storage, config.ResourcePrefix, config.NewListFunc, contextMetadata)
-	reflectorName := "storage/cacher.go:" + config.ResourcePrefix
+		config.Clock, eventFreshDuration, config.GroupResource, progressRequester, config.Storage.GetCurrentResourceVersion)
+	listerWatcher := NewListerWatcher(config.Storage, resourcePrefix, config.NewListFunc, contextMetadata)
+	reflectorName := "storage/cacher.go:" + resourcePrefix
 
-	reflector := cache.NewNamedReflector(reflectorName, listerWatcher, obj, watchCache, 0)
+	reflector := cache.NewNamedReflector(reflectorName, listerWatcher, nil, watchCache, 0)
 	// Configure reflector's pager to for an appropriate pagination chunk size for fetching data from
 	// storage. The pager falls back to full list if paginated list calls fail due to an "Expired" error.
 	reflector.WatchListPageSize = storageWatchListPageSize
@@ -437,12 +452,21 @@ func NewCacherFromConfig(config Config) (*Cacher, error) {
 	// We don't want to terminate all watchers as recreating all watchers puts high load on api-server.
 	// In most of the cases, leader is reelected within few cycles.
 	reflector.MaxInternalErrorRetryDuration = time.Second * 30
-	// since the watch-list is provided by the watch cache instruct
-	// the reflector to issue a regular LIST against the store
-	reflector.UseWatchList = ptr.To(false)
 
 	cacher.watchCache = watchCache
 	cacher.reflector = reflector
+
+	if utilfeature.DefaultFeatureGate.Enabled(features.SizeBasedListCostEstimate) {
+		err := config.Storage.EnableResourceSizeEstimation(cacher.getKeys)
+		if err != nil {
+			return nil, fmt.Errorf("failed to enable resource size estimation: %w", err)
+		}
+	}
+
+	if utilfeature.DefaultFeatureGate.Enabled(features.ListFromCacheSnapshot) {
+		cacher.compactor = newCompactor(config.Storage, watchCache, config.Clock)
+		go cacher.compactor.Run(stopCh)
+	}
 
 	go cacher.dispatchEvents()
 	go progressRequester.Run(stopCh)
@@ -459,15 +483,17 @@ func NewCacherFromConfig(config Config) (*Cacher, error) {
 			}, time.Second, stopCh,
 		)
 	}()
-
 	return cacher, nil
 }
 
 func (c *Cacher) startCaching(stopChannel <-chan struct{}) {
+	startTime := time.Now()
 	c.watchCache.SetOnReplace(func() {
 		c.ready.setReady()
-		klog.V(1).Infof("cacher (%v): initialized", c.groupResource.String())
-		metrics.WatchCacheInitializations.WithLabelValues(c.groupResource.String()).Inc()
+		duration := time.Since(startTime)
+		klog.V(1).InfoS("cacher initialized", "group", c.groupResource.Group, "resource", c.groupResource.Resource, "duration", duration)
+		metrics.WatchCacheInitializations.WithLabelValues(c.groupResource.Group, c.groupResource.Resource).Inc()
+		metrics.WatchCacheInitializationDuration.WithLabelValues(c.groupResource.Group, c.groupResource.Resource).Observe(duration.Seconds())
 	})
 	var err error
 	defer func() {
@@ -478,6 +504,7 @@ func (c *Cacher) startCaching(stopChannel <-chan struct{}) {
 	err = c.reflector.ListAndWatch(stopChannel)
 	if err != nil {
 		klog.Errorf("cacher (%v): unexpected ListAndWatch error: %v; reinitializing...", c.groupResource.String(), err)
+		metrics.WatchCacheInitializationErrors.WithLabelValues(c.groupResource.Group, c.groupResource.Resource).Inc()
 	}
 }
 
@@ -487,25 +514,23 @@ type namespacedName struct {
 }
 
 func (c *Cacher) Watch(ctx context.Context, key string, opts storage.ListOptions) (watch.Interface, error) {
+	ctx, span := tracing.Start(ctx, "cacher.Watch",
+		attribute.String("audit-id", audit.GetAuditIDTruncated(ctx)),
+		attribute.Stringer("type", c.groupResource))
+	defer span.End(500 * time.Millisecond)
+	key, err := c.prepareKey(key, opts.Recursive)
+	if err != nil {
+		return nil, err
+	}
 	pred := opts.Predicate
 	requestedWatchRV, err := c.versioner.ParseResourceVersion(opts.ResourceVersion)
 	if err != nil {
 		return nil, err
 	}
 
-	var readyGeneration int
-	if utilfeature.DefaultFeatureGate.Enabled(features.ResilientWatchCacheInitialization) {
-		var err error
-		var downtime time.Duration
-		readyGeneration, downtime, err = c.ready.checkAndReadGeneration()
-		if err != nil {
-			return nil, errors.NewTooManyRequests(err.Error(), calculateRetryAfterForUnreadyCache(downtime))
-		}
-	} else {
-		readyGeneration, err = c.ready.waitAndReadGeneration(ctx)
-		if err != nil {
-			return nil, errors.NewServiceUnavailable(err.Error())
-		}
+	readyGeneration, downtime, err := c.ready.checkAndReadGeneration()
+	if err != nil {
+		return nil, errors.NewTooManyRequests(err.Error(), calculateRetryAfterForUnreadyCache(downtime))
 	}
 
 	// determine the namespace and name scope of the watch, first from the request, secondarily from the field selector
@@ -575,12 +600,14 @@ func (c *Cacher) Watch(ctx context.Context, key string, opts storage.ListOptions
 	// to compute watcher.forget function (which has to happen under lock).
 	watcher := newCacheWatcher(
 		chanSize,
-		filterWithAttrsAndPrefixFunction(key, pred),
+		filterWithAttrsAndPrefixFunction(key, pred, c.groupResource),
 		emptyFunc,
 		c.versioner,
 		deadline,
 		pred.AllowWatchBookmarks,
 		c.groupResource,
+		c.watcherMetrics,
+		c.clock,
 		identifier,
 	)
 
@@ -649,11 +676,28 @@ func (c *Cacher) Watch(ctx context.Context, key string, opts storage.ListOptions
 		return newImmediateCloseWatcher(), nil
 	}
 
+	if utilfeature.DefaultFeatureGate.Enabled(features.ShardedListAndWatch) && pred.ShardSelector != nil && !pred.ShardSelector.Empty() {
+		metrics.RecordShardedWatchStarted(c.groupResource)
+		originalForget := watcher.forget
+		watcher.forget = func(drainWatcher bool) {
+			metrics.RecordShardedWatchStopped(c.groupResource)
+			originalForget(drainWatcher)
+		}
+	}
+
 	go watcher.processInterval(ctx, cacheInterval, requiredResourceVersion)
 	return watcher, nil
 }
 
 func (c *Cacher) Get(ctx context.Context, key string, opts storage.GetOptions, objPtr runtime.Object) error {
+	ctx, span := tracing.Start(ctx, "cacher.Get",
+		attribute.String("audit-id", audit.GetAuditIDTruncated(ctx)),
+		attribute.String("key", key),
+		attribute.String("resource-version", opts.ResourceVersion))
+	key, err := c.prepareKey(key, false)
+	if err != nil {
+		return err
+	}
 	getRV, err := c.versioner.ParseResourceVersion(opts.ResourceVersion)
 	if err != nil {
 		return err
@@ -668,11 +712,13 @@ func (c *Cacher) Get(ctx context.Context, key string, opts storage.GetOptions, o
 	if err != nil {
 		return err
 	}
+	// Get long processing is >500ms, however wait for fresh cache timeout is 3s so want to avoid traces just showing waits.
+	defer span.End(500 * time.Millisecond)
 
 	if exists {
-		elem, ok := obj.(*storeElement)
+		elem, ok := obj.(*store.Element)
 		if !ok {
-			return fmt.Errorf("non *storeElement returned from storage: %v", obj)
+			return fmt.Errorf("non *store.Element returned from storage: %v", obj)
 		}
 		objVal.Set(reflect.ValueOf(elem.Object).Elem())
 	} else {
@@ -698,20 +744,6 @@ func computeListLimit(opts storage.ListOptions) int64 {
 	return opts.Predicate.Limit
 }
 
-func (c *Cacher) listItems(ctx context.Context, listRV uint64, key string, opts storage.ListOptions) (listResp, string, error) {
-	if !opts.Recursive {
-		obj, exists, readResourceVersion, err := c.watchCache.WaitUntilFreshAndGet(ctx, listRV, key)
-		if err != nil {
-			return listResp{}, "", err
-		}
-		if exists {
-			return listResp{Items: []interface{}{obj}, ResourceVersion: readResourceVersion}, "", nil
-		}
-		return listResp{ResourceVersion: readResourceVersion}, "", nil
-	}
-	return c.watchCache.WaitUntilFreshAndList(ctx, listRV, key, opts)
-}
-
 type listResp struct {
 	Items           []interface{}
 	ResourceVersion uint64
@@ -719,15 +751,11 @@ type listResp struct {
 
 // GetList implements storage.Interface
 func (c *Cacher) GetList(ctx context.Context, key string, opts storage.ListOptions, listObj runtime.Object) error {
-	// For recursive lists, we need to make sure the key ended with "/" so that we only
-	// get children "directories". e.g. if we have key "/a", "/a/b", "/ab", getting keys
-	// with prefix "/a" will return all three, while with prefix "/a/" will return only
-	// "/a/b" which is the correct answer.
-	preparedKey := key
-	if opts.Recursive && !strings.HasSuffix(key, "/") {
-		preparedKey += "/"
+	preparedKey, err := c.prepareKey(key, opts.Recursive)
+	if err != nil {
+		return err
 	}
-	listRV, err := c.versioner.ParseResourceVersion(opts.ResourceVersion)
+	_, err = c.versioner.ParseResourceVersion(opts.ResourceVersion)
 	if err != nil {
 		return err
 	}
@@ -737,16 +765,10 @@ func (c *Cacher) GetList(ctx context.Context, key string, opts storage.ListOptio
 		attribute.Stringer("type", c.groupResource))
 	defer span.End(500 * time.Millisecond)
 
-	if utilfeature.DefaultFeatureGate.Enabled(features.ResilientWatchCacheInitialization) {
-		if downtime, err := c.ready.check(); err != nil {
-			// If Cacher is not initialized, reject List requests
-			// as described in https://kep.k8s.io/4568
-			return errors.NewTooManyRequests(err.Error(), calculateRetryAfterForUnreadyCache(downtime))
-		}
-	} else {
-		if err := c.ready.wait(ctx); err != nil {
-			return errors.NewServiceUnavailable(err.Error())
-		}
+	if downtime, err := c.ready.check(); err != nil {
+		// If Cacher is not initialized, reject List requests
+		// as described in https://kep.k8s.io/4568
+		return errors.NewTooManyRequests(err.Error(), calculateRetryAfterForUnreadyCache(downtime))
 	}
 	span.AddEvent("Ready")
 
@@ -763,42 +785,69 @@ func (c *Cacher) GetList(ctx context.Context, key string, opts storage.ListOptio
 		return fmt.Errorf("need a pointer to slice, got %v", listVal.Kind())
 	}
 
-	resp, indexUsed, err := c.listItems(ctx, listRV, preparedKey, opts)
+	resp, indexUsed, err := c.watchCache.WaitUntilFreshAndGetList(ctx, preparedKey, opts)
 	if err != nil {
 		return err
 	}
 	span.AddEvent("Listed items from cache", attribute.Int("count", len(resp.Items)))
-	// store pointer of eligible objects,
-	// Why not directly put object in the items of listObj?
-	//   the elements in ListObject are Struct type, making slice will bring excessive memory consumption.
-	//   so we try to delay this action as much as possible
-	var selectedObjects []runtime.Object
 	var lastSelectedObjectKey string
 	var hasMoreListItems bool
 	limit := computeListLimit(opts)
-	for i, obj := range resp.Items {
-		elem, ok := obj.(*storeElement)
-		if !ok {
-			return fmt.Errorf("non *storeElement returned from storage: %v", obj)
+	if opts.Predicate.Empty() {
+		// Every item matches, so the result size is known upfront and items can be
+		// copied directly into the result list without an intermediate slice.
+		count := len(resp.Items)
+		if limit > 0 && int64(count) > limit {
+			count = int(limit)
+			hasMoreListItems = true
 		}
-		if opts.Predicate.MatchesObjectAttributes(elem.Labels, elem.Fields) {
-			selectedObjects = append(selectedObjects, elem.Object)
+		listVal.Set(reflect.MakeSlice(listVal.Type(), count, count))
+		for i, obj := range resp.Items[:count] {
+			elem, ok := obj.(*store.Element)
+			if !ok {
+				return fmt.Errorf("non *store.Element returned from storage: %v", obj)
+			}
+			listVal.Index(i).Set(reflect.ValueOf(elem.Object).Elem())
 			lastSelectedObjectKey = elem.Key
 		}
-		if limit > 0 && int64(len(selectedObjects)) >= limit {
-			hasMoreListItems = i < len(resp.Items)-1
-			break
-		}
-	}
-	if len(selectedObjects) == 0 {
-		// Ensure that we never return a nil Items pointer in the result for consistency.
-		listVal.Set(reflect.MakeSlice(listVal.Type(), 0, 0))
 	} else {
-		// Resize the slice appropriately, since we already know that size of result set
-		listVal.Set(reflect.MakeSlice(listVal.Type(), len(selectedObjects), len(selectedObjects)))
-		span.AddEvent("Resized result")
-		for i, o := range selectedObjects {
-			listVal.Index(i).Set(reflect.ValueOf(o).Elem())
+		// store pointer of eligible objects,
+		// Why not directly put object in the items of listObj?
+		//   the elements in ListObject are Struct type, making slice will bring excessive memory consumption.
+		//   so we try to delay this action as much as possible
+		var selectedObjects []runtime.Object
+		for i, obj := range resp.Items {
+			elem, ok := obj.(*store.Element)
+			if !ok {
+				return fmt.Errorf("non *store.Element returned from storage: %v", obj)
+			}
+			shardMatch := true
+			if utilfeature.DefaultFeatureGate.Enabled(features.ShardedListAndWatch) {
+				var err error
+				shardMatch, err = opts.Predicate.MatchesSharding(elem.Object)
+				if err != nil {
+					return fmt.Errorf("shard matching failed: %w", err)
+				}
+			}
+			if shardMatch && opts.Predicate.MatchesObjectAttributes(elem.Labels, elem.Fields) {
+				selectedObjects = append(selectedObjects, elem.Object)
+				lastSelectedObjectKey = elem.Key
+			}
+			if limit > 0 && int64(len(selectedObjects)) >= limit {
+				hasMoreListItems = i < len(resp.Items)-1
+				break
+			}
+		}
+		if len(selectedObjects) == 0 {
+			// Ensure that we never return a nil Items pointer in the result for consistency.
+			listVal.Set(reflect.MakeSlice(listVal.Type(), 0, 0))
+		} else {
+			// Resize the slice appropriately, since we already know that size of result set
+			listVal.Set(reflect.MakeSlice(listVal.Type(), len(selectedObjects), len(selectedObjects)))
+			span.AddEvent("Resized result")
+			for i, o := range selectedObjects {
+				listVal.Index(i).Set(reflect.ValueOf(o).Elem())
+			}
 		}
 	}
 	span.AddEvent("Filtered items", attribute.Int("count", listVal.Len()))
@@ -812,7 +861,10 @@ func (c *Cacher) GetList(ctx context.Context, key string, opts storage.ListOptio
 			return err
 		}
 	}
-	metrics.RecordListCacheMetrics(c.resourcePrefix, indexUsed, len(resp.Items), listVal.Len())
+	if utilfeature.DefaultFeatureGate.Enabled(features.ShardedListAndWatch) {
+		opts.Predicate.SetShardInfoOnList(listObj)
+	}
+	metrics.RecordListCacheMetrics(c.groupResource, indexUsed, len(resp.Items), listVal.Len())
 	return nil
 }
 
@@ -891,7 +943,7 @@ func (c *Cacher) dispatchEvents() {
 				c.dispatchEvent(&event)
 			}
 			lastProcessedResourceVersion = event.ResourceVersion
-			metrics.EventsCounter.WithLabelValues(c.groupResource.String()).Inc()
+			metrics.EventsCounter.WithLabelValues(c.groupResource.Group, c.groupResource.Resource).Inc()
 		case <-bookmarkTimer.C():
 			bookmarkTimer.Reset(wait.Jitter(time.Second, 0.25))
 			bookmarkEvent := &watchCacheEvent{
@@ -949,9 +1001,6 @@ func (c *Cacher) dispatchEvent(event *watchCacheEvent) {
 	// Since add() can block, we explicitly add when cacher is unlocked.
 	// Dispatching event in nonblocking way first, which make faster watchers
 	// not be blocked by slower ones.
-	//
-	// Note: if we ever decide to cache the serialization of bookmark events,
-	// we will also need to modify the watchEncoder encoder
 	if event.Type == watch.Bookmark {
 		for _, watcher := range c.watchersBuffer {
 			watcher.nonblockingAdd(event)
@@ -1146,6 +1195,19 @@ func (c *Cacher) isStopped() bool {
 	return c.stopped
 }
 
+func (c *Cacher) Compact(resourceVersion string) error {
+	rv, err := c.versioner.ParseResourceVersion(resourceVersion)
+	if err != nil {
+		return err
+	}
+	c.watchCache.storage.Compact(rv)
+	return nil
+}
+
+func (c *Cacher) MarkConsistent(consistent bool) {
+	c.watchCache.storage.MarkConsistent(consistent)
+}
+
 // Stop implements the graceful termination.
 func (c *Cacher) Stop() {
 	c.stopLock.Lock()
@@ -1159,6 +1221,10 @@ func (c *Cacher) Stop() {
 	c.stopLock.Unlock()
 	close(c.stopCh)
 	c.stopWg.Wait()
+}
+
+func (c *Cacher) prepareKey(key string, recursive bool) (string, error) {
+	return storage.PrepareKey(c.resourcePrefix, key, recursive)
 }
 
 func forgetWatcher(c *Cacher, w *cacheWatcher, index int, scope namespacedName, triggerValue string, triggerSupported bool) func(bool) {
@@ -1176,10 +1242,22 @@ func forgetWatcher(c *Cacher, w *cacheWatcher, index int, scope namespacedName, 
 	}
 }
 
-func filterWithAttrsAndPrefixFunction(key string, p storage.SelectionPredicate) filterWithAttrsFunc {
-	filterFunc := func(objKey string, label labels.Set, field fields.Set) bool {
-		if !hasPathPrefix(objKey, key) {
+func filterWithAttrsAndPrefixFunction(prefix string, p storage.SelectionPredicate, groupResource schema.GroupResource) filterWithAttrsFunc {
+	isSharded := utilfeature.DefaultFeatureGate.Enabled(features.ShardedListAndWatch) && p.ShardSelector != nil && !p.ShardSelector.Empty()
+	filterFunc := func(objKey string, label labels.Set, field fields.Set, obj runtime.Object) bool {
+		if !key.HasPathPrefix(objKey, prefix) {
 			return false
+		}
+		if isSharded {
+			matches, err := p.MatchesSharding(obj)
+			if err != nil {
+				utilruntime.HandleError(fmt.Errorf("shard matching failed for %v: %w", groupResource, err))
+				return false
+			}
+			if !matches {
+				metrics.RecordWatchFilteredEvent(groupResource)
+				return false
+			}
 		}
 		return p.MatchesObjectAttributes(label, field)
 	}
@@ -1216,6 +1294,7 @@ func (c *Cacher) getBookmarkAfterResourceVersionLockedFunc(parsedResourceVersion
 	}
 }
 
+// isListWatchRequest is mirrored in staging/src/k8s.io/apiserver/pkg/endpoints/handlers/get.go
 func isListWatchRequest(opts storage.ListOptions) bool {
 	return opts.SendInitialEvents != nil && *opts.SendInitialEvents && opts.Predicate.AllowWatchBookmarks
 }
@@ -1236,7 +1315,7 @@ func (c *Cacher) getWatchCacheResourceVersion(ctx context.Context, parsedWatchRe
 		return parsedWatchResourceVersion, nil
 	}
 	// legacy case
-	if !utilfeature.DefaultFeatureGate.Enabled(features.WatchFromStorageWithoutResourceVersion) && opts.SendInitialEvents == nil && opts.ResourceVersion == "" {
+	if opts.SendInitialEvents == nil && opts.ResourceVersion == "" {
 		return 0, nil
 	}
 	rv, err := c.storage.GetCurrentResourceVersion(ctx)
@@ -1256,13 +1335,17 @@ func (c *Cacher) waitUntilWatchCacheFreshAndForceAllEvents(ctx context.Context, 
 		//
 		// In this very rare scenario, the worst case will be that this
 		// request will wait for 3 seconds before it fails.
-		if etcdfeature.DefaultFeatureSupportChecker.Supports(storage.RequestWatchProgress) && c.watchCache.notFresh(requestedWatchRV) {
-			c.watchCache.waitingUntilFresh.Add()
-			defer c.watchCache.waitingUntilFresh.Remove()
-		}
-		err := c.watchCache.waitUntilFreshAndBlock(ctx, requestedWatchRV)
+		span := tracing.SpanFromContext(ctx)
+		consistentReadSupported := delegator.ConsistentReadSupported()
+		c.watchCache.RLock()
+		span.AddEvent("watchCache locked acquired")
 		defer c.watchCache.RUnlock()
-		return err
+		err := c.watchCache.waitUntilFreshLocked(ctx, consistentReadSupported, requestedWatchRV)
+		if err != nil {
+			return err
+		}
+		span.AddEvent("watchCache fresh enough")
+		return nil
 	}
 	return nil
 }
@@ -1290,6 +1373,18 @@ func (c *Cacher) setInitialEventsEndBookmarkIfRequested(cacheInterval *watchCach
 
 		cacheInterval.initialEventsEndBookmark = initialEventsEndBookmark
 	}
+}
+
+func (c *Cacher) getKeys(ctx context.Context) ([]string, error) {
+	ctx, span := tracing.Start(ctx, "cacher.getKeys",
+		attribute.String("audit-id", audit.GetAuditIDTruncated(ctx)))
+	defer span.End(500 * time.Millisecond)
+	rev, err := c.storage.GetCurrentResourceVersion(ctx)
+	if err != nil {
+		return nil, err
+	}
+	span.AddEvent("GetCurrentResourceVersion succeed", attribute.Int64("resource-version", int64(rev)))
+	return c.watchCache.WaitUntilFreshAndGetKeys(ctx, rev)
 }
 
 func (c *Cacher) Ready() bool {
@@ -1329,7 +1424,7 @@ func newErrWatcher(err error) *errWatcher {
 
 func (c *Cacher) ShouldDelegateExactRV(resourceVersion string, recursive bool) (delegator.Result, error) {
 	// Not Recursive is not supported unitl exact RV is implemented for WaitUntilFreshAndGet.
-	if !recursive || c.watchCache.snapshots == nil {
+	if !recursive || !c.watchCache.storage.SnapshottingEnabled() {
 		return delegator.Result{ShouldDelegate: true}, nil
 	}
 	listRV, err := c.versioner.ParseResourceVersion(resourceVersion)
@@ -1341,7 +1436,7 @@ func (c *Cacher) ShouldDelegateExactRV(resourceVersion string, recursive bool) (
 
 func (c *Cacher) ShouldDelegateContinue(continueToken string, recursive bool) (delegator.Result, error) {
 	// Not Recursive is not supported unitl exact RV is implemented for WaitUntilFreshAndGet.
-	if !recursive || c.watchCache.snapshots == nil {
+	if !recursive || !c.watchCache.storage.SnapshottingEnabled() {
 		return delegator.Result{ShouldDelegate: true}, nil
 	}
 	_, continueRV, err := storage.DecodeContinue(continueToken, c.resourcePrefix)
@@ -1363,7 +1458,7 @@ func (c *Cacher) shouldDelegateExactRV(rv uint64) (delegator.Result, error) {
 			ShouldDelegate: !delegator.ConsistentReadSupported(),
 		}, nil
 	}
-	_, canServe := c.watchCache.snapshots.GetLessOrEqual(rv)
+	canServe := c.watchCache.storage.CanServeExactRV(rv)
 	return delegator.Result{
 		ShouldDelegate: !canServe,
 	}, nil

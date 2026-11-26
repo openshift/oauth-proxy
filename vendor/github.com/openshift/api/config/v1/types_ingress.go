@@ -43,6 +43,7 @@ type IngressSpec struct {
 	// default ingresscontroller domain will follow this pattern: "*.<domain>".
 	//
 	// Once set, changing domain is not currently supported.
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="domain is immutable once set"
 	Domain string `json:"domain"`
 
 	// appsDomain is an optional domain to use instead of the one specified
@@ -63,10 +64,12 @@ type IngressSpec struct {
 	// To determine the set of configurable Routes, look at namespace and name of entries in the
 	// .status.componentRoutes list, where participating operators write the status of
 	// configurable routes.
+	// A maximum of 250 component routes may be configured.
 	// +optional
 	// +listType=map
 	// +listMapKey=namespace
 	// +listMapKey=name
+	// +kubebuilder:validation:MaxItems=250
 	ComponentRoutes []ComponentRouteSpec `json:"componentRoutes,omitempty"`
 
 	// requiredHSTSPolicies specifies HSTS policies that are required to be set on newly created  or updated routes
@@ -92,6 +95,7 @@ type IngressSpec struct {
 	//
 	// Note that if there are no RequiredHSTSPolicies, any HSTS Policy annotation on the route is valid.
 	// +optional
+	// +listType=atomic
 	RequiredHSTSPolicies []RequiredHSTSPolicy `json:"requiredHSTSPolicies,omitempty"`
 
 	// loadBalancer contains the load balancer details in general which are not only specific to the underlying infrastructure
@@ -162,6 +166,15 @@ const (
 	// Classic is the Classic Load Balancer Type of AWS. Using CLassic one can set Classic load balancer type for the default ingress controller.
 	Classic AWSLBType = "Classic"
 )
+
+// LabelValue is the value part of a Kubernetes label.
+// A label value must be either empty or 1-63 characters, consisting of
+// alphanumeric characters, '-', '_', or '.', starting and ending with
+// an alphanumeric character.
+// +kubebuilder:validation:MaxLength=63
+// +kubebuilder:validation:MinLength=0
+// +kubebuilder:validation:XValidation:rule="self == \"\" || self.matches('^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$')",message="label values must be valid Kubernetes label values (at most 63 characters, alphanumeric, '-', '_', or '.', must start and end with alphanumeric)"
+type LabelValue string
 
 // ConsumingUser is an alias for string which we add validation to. Currently only service accounts are supported.
 // +kubebuilder:validation:Pattern="^system:serviceaccount:[a-z0-9]([-a-z0-9]*[a-z0-9])?:[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$"
@@ -244,6 +257,33 @@ type ComponentRouteSpec struct {
 	// the Secret specification for a serving certificate will not be needed.
 	// +optional
 	ServingCertKeyPairSecret SecretNameReference `json:"servingCertKeyPairSecret"`
+
+	// labels defines additional labels to be applied to the route created
+	// for the component. These labels are used by the IngressController to
+	// determine which routes it should manage. Changing labels may cause the
+	// route to be reassigned to a different IngressController.
+	// When omitted, no additional labels are applied to the component route.
+	// When specified, labels must contain at least one entry, up to a maximum of 8.
+	// Label keys must be valid qualified names, consisting of a name segment and
+	// an optional prefix separated by a slash (/). The name segment must be at most
+	// 63 characters in length and must consist only of alphanumeric characters,
+	// dashes (-), underscores (_), and dots (.), and must start and end with
+	// alphanumeric characters. The prefix, if specified, must be a DNS subdomain:
+	// at most 253 characters in length, consisting of dot-separated segments where
+	// each segment starts and ends with an alphanumeric character.
+	// Label values must be either empty or 1-63 characters, consisting of
+	// alphanumeric characters, dashes (-), underscores (_), or dots (.),
+	// starting and ending with an alphanumeric character.
+	// Keys with the "kubernetes.io/", "k8s.io/", and "openshift.io/" prefixes are reserved and may not be used.
+	// +openshift:enable:FeatureGate=IngressComponentRouteLabels
+	// +optional
+	// +mapType=granular
+	// +kubebuilder:validation:MinProperties=1
+	// +kubebuilder:validation:MaxProperties=8
+	// +kubebuilder:validation:XValidation:rule="self.all(key, key.size() <= 63 && key.size() > 0)",message="label keys must be between 1 and 63 characters in length"
+	// +kubebuilder:validation:XValidation:rule="self.all(key, key.matches('^([a-z0-9]([a-z0-9\\\\-]*[a-z0-9])?(\\\\.[a-z0-9]([a-z0-9\\\\-]*[a-z0-9])?)*\\\\/)?[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$') && key.size() <= 253)",message="label keys must be valid qualified names, consisting of an optional DNS subdomain prefix of up to 253 characters followed by a slash and a name segment of 1-63 characters, that consists only of alphanumeric characters, dashes, underscores, and dots, and must start and end with an alphanumeric character"
+	// +kubebuilder:validation:XValidation:rule="self.all(key, !key.startsWith('kubernetes.io/') && !key.startsWith('k8s.io/') && !key.startsWith('openshift.io/'))",message="kubernetes.io/, k8s.io/, and openshift.io/ prefixed label keys are reserved and may not be used"
+	Labels map[string]LabelValue `json:"labels,omitempty"`
 }
 
 // ComponentRouteStatus contains information allowing configuration of a route's hostname and serving certificate.
@@ -276,12 +316,14 @@ type ComponentRouteStatus struct {
 	// consumingUsers is a slice of ServiceAccounts that need to have read permission on the servingCertKeyPairSecret secret.
 	// +kubebuilder:validation:MaxItems=5
 	// +optional
+	// +listType=atomic
 	ConsumingUsers []ConsumingUser `json:"consumingUsers,omitempty"`
 
 	// currentHostnames is the list of current names used by the route. Typically, this list should consist of a single
 	// hostname, but if multiple hostnames are supported by the route the operator may write multiple entries to this list.
 	// +kubebuilder:validation:MinItems=1
 	// +optional
+	// +listType=atomic
 	CurrentHostnames []Hostname `json:"currentHostnames,omitempty"`
 
 	// conditions are used to communicate the state of the componentRoutes entry.
@@ -304,6 +346,7 @@ type ComponentRouteStatus struct {
 	// relatedObjects is a list of resources which are useful when debugging or inspecting how spec.componentRoutes is applied.
 	// +kubebuilder:validation:MinItems=1
 	// +required
+	// +listType=atomic
 	RelatedObjects []ObjectReference `json:"relatedObjects"`
 }
 
