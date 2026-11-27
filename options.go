@@ -44,8 +44,8 @@ type Options struct {
 	TLSKeyFile       string        `flag:"tls-key" cfg:"tls_key_file"`
 	TLSClientCAFile  string        `flag:"tls-client-ca" cfg:"tls_client_ca"`
 	TLSMinVersion    string        `flag:"tls-min-version" cfg:"tls_min_version"`
-	TLSCipherSuites  []string      `cfg:"tls_cipher_suites"` // No flag tag - manually parsed after Resolve()
-	TLSGroups        []string      `cfg:"tls_groups"`        // No flag tag - manually parsed after Resolve()
+	TLSCipherSuites  []string      `flag:"tls-cipher-suites" cfg:"tls_cipher_suites"`
+	TLSGroups        []string      `flag:"tls-groups" cfg:"tls_groups"`
 
 	AuthenticatedEmailsFile string   `flag:"authenticated-emails-file" cfg:"authenticated_emails_file"`
 	EmailDomains            []string `flag:"email-domain" cfg:"email_domains"`
@@ -328,6 +328,9 @@ func (o *Options) Validate(p providers.Provider) error {
 		}
 	}
 
+	// go-options resolves comma-separated flag values and config-file arrays into these slices,
+	// but it does not trim whitespace or drop empty entries, so normalize before resolving names.
+	o.TLSCipherSuites = normalizeTLSList(o.TLSCipherSuites)
 	if len(o.TLSCipherSuites) > 0 {
 		var unrecognized []string
 		o.tlsCipherSuiteIDs = make([]uint16, 0, len(o.TLSCipherSuites))
@@ -343,6 +346,7 @@ func (o *Options) Validate(p providers.Provider) error {
 		}
 	}
 
+	o.TLSGroups = normalizeTLSList(o.TLSGroups)
 	if len(o.TLSGroups) > 0 {
 		groups := make([]configv1.TLSGroup, len(o.TLSGroups))
 		for i, name := range o.TLSGroups {
@@ -498,6 +502,18 @@ var tlsCipherSuiteMap = func() map[string]uint16 {
 	}
 	return m
 }()
+
+// normalizeTLSList trims whitespace from each entry and drops empty entries, since comma-separated
+// flag values and config-file arrays may contain either.
+func normalizeTLSList(values []string) []string {
+	normalized := make([]string, 0, len(values))
+	for _, v := range values {
+		if trimmed := strings.TrimSpace(v); trimmed != "" {
+			normalized = append(normalized, trimmed)
+		}
+	}
+	return normalized
+}
 
 func validTLSVersions() string {
 	versions := make([]string, 0, len(tlsVersionMap))

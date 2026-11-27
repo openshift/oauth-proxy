@@ -308,3 +308,29 @@ func TestValidateTLSGroupsPostQuantum(t *testing.T) {
 	assert.Equal(t, tls.SecP256r1MLKEM768, o.tlsCurveIDs[1])
 	assert.Equal(t, tls.SecP384r1MLKEM1024, o.tlsCurveIDs[2])
 }
+
+func TestValidateTLSGroupsNormalized(t *testing.T) {
+	// Comma-separated flag/config values may carry whitespace and empty entries.
+	o := testOptions()
+	o.TLSGroups = []string{" X25519 ", "", "secp256r1 "}
+	assert.Equal(t, nil, o.Validate(&testProvider{}))
+	assert.Equal(t, 2, len(o.tlsCurveIDs))
+	assert.Equal(t, tls.X25519, o.tlsCurveIDs[0])
+	assert.Equal(t, tls.CurveP256, o.tlsCurveIDs[1])
+}
+
+func TestValidateTLSGroupsEmptyIsUnset(t *testing.T) {
+	// go-options coerces an unset --tls-groups string flag to [""]; that must behave like "not
+	// configured" (Go defaults) rather than fail validation.
+	o := testOptions()
+	o.TLSGroups = []string{""}
+	assert.Equal(t, nil, o.Validate(&testProvider{}))
+	assert.Equal(t, 0, len(o.tlsCurveIDs))
+}
+
+func TestValidateTLSCipherSuitesNormalized(t *testing.T) {
+	o := testOptions()
+	o.TLSCipherSuites = []string{" TLS_AES_128_GCM_SHA256 ", ""}
+	assert.Equal(t, nil, o.Validate(&testProvider{}))
+	assert.Equal(t, 1, len(o.tlsCipherSuiteIDs))
+}
