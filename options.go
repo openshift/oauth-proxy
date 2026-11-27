@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/18F/hmacauth"
 
+	configv1 "github.com/openshift/api/config/v1"
 	oscrypto "github.com/openshift/library-go/pkg/crypto"
 
 	"github.com/openshift/oauth-proxy/providers"
@@ -42,7 +44,8 @@ type Options struct {
 	TLSKeyFile       string        `flag:"tls-key" cfg:"tls_key_file"`
 	TLSClientCAFile  string        `flag:"tls-client-ca" cfg:"tls_client_ca"`
 	TLSMinVersion    string        `flag:"tls-min-version" cfg:"tls_min_version"`
-	TLSCipherSuites  []string      `cfg:"tls_cipher_suites"` // No flag tag - manually parsed after Resolve()
+	TLSCipherSuites  []string      `flag:"tls-cipher-suites" cfg:"tls_cipher_suites"`
+	TLSGroups        []string      `flag:"tls-groups" cfg:"tls_groups"`
 
 	AuthenticatedEmailsFile string   `flag:"authenticated-emails-file" cfg:"authenticated_emails_file"`
 	EmailDomains            []string `flag:"email-domain" cfg:"email_domains"`
@@ -122,6 +125,7 @@ type Options struct {
 	signatureData      *SignatureData
 	tlsMinVersionValue uint16
 	tlsCipherSuiteIDs  []uint16
+	tlsCurveIDs        []tls.CurveID
 }
 
 type SignatureData struct {
@@ -324,6 +328,9 @@ func (o *Options) Validate(p providers.Provider) error {
 		}
 	}
 
+	// go-options resolves comma-separated flag values and config-file arrays into these slices,
+	// but it does not trim whitespace or drop empty entries, so normalize before resolving names.
+	o.TLSCipherSuites = normalizeTLSList(o.TLSCipherSuites)
 	if len(o.TLSCipherSuites) > 0 {
 		var unrecognized []string
 		o.tlsCipherSuiteIDs = make([]uint16, 0, len(o.TLSCipherSuites))
@@ -336,6 +343,32 @@ func (o *Options) Validate(p providers.Provider) error {
 		}
 		if len(unrecognized) > 0 {
 			msgs = append(msgs, fmt.Sprintf("unrecognized tls-cipher-suites: %s", strings.Join(unrecognized, ", ")))
+		}
+	}
+
+	o.TLSGroups = normalizeTLSList(o.TLSGroups)
+	if len(o.TLSGroups) > 0 {
+		groups := make([]configv1.TLSGroup, len(o.TLSGroups))
+		for i, name := range o.TLSGroups {
+			groups[i] = configv1.TLSGroup(name)
+		}
+		curves, unrecognized := oscrypto.TLSGroupsToCurveIDs(groups)
+		o.tlsCurveIDs = curves
+		// Unlike cipher suites, individually unrecognized groups are logged and skipped rather than
+		// failing validation. TLS group support is Go-version dependent, so passing a newer group
+		// name to an older oauth-proxy build should degrade gracefully (use the recognized groups)
+		// instead of crash-looping. This matches kube-rbac-proxy and other OCM components.
+		if len(unrecognized) > 0 {
+			names := make([]string, len(unrecognized))
+			for i, group := range unrecognized {
+				names[i] = string(group)
+			}
+			log.Printf("ignoring unrecognized tls-groups not supported by this build: %s", strings.Join(names, ", "))
+		}
+		// Fail closed: if groups were explicitly requested but none are usable, reject rather than
+		// silently falling back to Go's defaults, which would drop the intended restriction.
+		if len(o.tlsCurveIDs) == 0 {
+			msgs = append(msgs, fmt.Sprintf("no supported tls-groups in %q", strings.Join(o.TLSGroups, ", ")))
 		}
 	}
 
@@ -469,6 +502,18 @@ var tlsCipherSuiteMap = func() map[string]uint16 {
 	}
 	return m
 }()
+
+// normalizeTLSList trims whitespace from each entry and drops empty entries, since comma-separated
+// flag values and config-file arrays may contain either.
+func normalizeTLSList(values []string) []string {
+	normalized := make([]string, 0, len(values))
+	for _, v := range values {
+		if trimmed := strings.TrimSpace(v); trimmed != "" {
+			normalized = append(normalized, trimmed)
+		}
+	}
+	return normalized
+}
 
 func validTLSVersions() string {
 	versions := make([]string, 0, len(tlsVersionMap))

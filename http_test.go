@@ -73,3 +73,41 @@ func TestBuildTLSConfig_CipherSuites(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildTLSConfig_Groups(t *testing.T) {
+	tests := []struct {
+		name        string
+		curveIDs    []tls.CurveID
+		expectCount int
+	}{
+		{
+			name:        "single curve",
+			curveIDs:    []tls.CurveID{tls.X25519},
+			expectCount: 1,
+		},
+		{
+			name:        "multiple curves",
+			curveIDs:    []tls.CurveID{tls.X25519, tls.CurveP256, tls.CurveP384},
+			expectCount: 3,
+		},
+		{
+			name:        "no curves uses default",
+			curveIDs:    nil,
+			expectCount: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := &Server{Opts: &Options{
+				tlsMinVersionValue: tls.VersionTLS13,
+				tlsCurveIDs:        tt.curveIDs,
+			}}
+			config := s.buildTLSConfig()
+
+			if len(config.CurvePreferences) != tt.expectCount {
+				t.Errorf("Expected %d curve preferences, got %d", tt.expectCount, len(config.CurvePreferences))
+			}
+		})
+	}
+}
